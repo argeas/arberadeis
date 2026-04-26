@@ -295,6 +295,15 @@
             } else {
                 await fetch(API + '/api/mode/paper', {method:'POST'});
             }
+            // Update badge immediately without waiting for poll
+            const newRes = await fetch(API + '/api/mode');
+            const newMode = (await newRes.json()).mode;
+            const badge = document.getElementById('active-mode-badge');
+            badge.textContent = newMode.toUpperCase();
+            badge.style.background = newMode === 'paper' ? '#854d0e' : '#991b1b';
+            badge.style.color = newMode === 'paper' ? '#fde047' : '#fca5a5';
+            const toggleBtn = document.getElementById('enable-btn');
+            toggleBtn.textContent = newMode === 'paper' ? 'Switch to LIVE' : 'Switch to PAPER';
             fetchStatus();
         }
 
