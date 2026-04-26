@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from app.config import config
 from app.database import init_db, get_recent_opportunities, get_recent_legs, get_stats
 from app.scanner import scan_loop, _market_pairs
+from app import kalshi_api
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +126,40 @@ async def get_config():
         "paper_mode": config.paper_mode,
         "scan_interval_ms": config.scan_interval_ms,
     }
+
+
+@app.get("/api/wallet")
+async def wallet():
+    """Get wallet balances across all venues."""
+    balances = {"polymarket": 0, "jupiter": 0, "kalshi": 0, "total": 0}
+
+    if config.venue_polymarket_enabled:
+        try:
+            from app.polymarket_api import _get_clob_client
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            import asyncio
+            client = _get_clob_client()
+            if client:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: client.get_balance_allowance(
+                        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
+                    ),
+                )
+                if result and "balance" in result:
+                    balances["polymarket"] = round(int(result["balance"]) / 1e6, 2)
+        except Exception as e:
+            logger.warning(f"[WALLET] Polymarket balance error: {e}")
+
+    if config.venue_kalshi_enabled:
+        try:
+            balances["kalshi"] = await kalshi_api.get_balance()
+        except Exception:
+            pass
+
+    balances["total"] = round(balances["polymarket"] + balances["jupiter"] + balances["kalshi"], 2)
+    return balances
 
 
 @app.post("/api/mode/paper")

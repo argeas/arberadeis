@@ -374,11 +374,15 @@
                 }
             } catch(e) {}
 
-            // Wallet balance (placeholder — TODO: add /api/wallet endpoint)
-            document.getElementById('wallet-balance').textContent = '$---';
-            document.getElementById('w-poly').textContent = '$---';
-            document.getElementById('w-jup').textContent = '$---';
-            document.getElementById('w-kalshi').textContent = '$---';
+            // Wallet balance
+            try {
+                const wRes = await fetch(API + '/api/wallet');
+                const w = await wRes.json();
+                document.getElementById('wallet-balance').textContent = '$' + w.total.toFixed(2);
+                document.getElementById('w-poly').textContent = '$' + w.polymarket.toFixed(2);
+                document.getElementById('w-jup').textContent = '$' + w.jupiter.toFixed(2);
+                document.getElementById('w-kalshi').textContent = '$' + w.kalshi.toFixed(2);
+            } catch(e) {}
         }
 
         fetchStatus();

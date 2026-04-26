@@ -26,24 +26,26 @@ def _get_clob_client():
 
     try:
         from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds, BuilderConfig
+        from py_clob_client.clob_types import ApiCreds
+        from py_builder_signing_sdk.config import BuilderConfig, BuilderApiKeyCreds
 
         creds = ApiCreds(
             api_key=config.poly_api_key,
             api_secret=config.poly_api_secret,
             api_passphrase=config.poly_api_passphrase,
         )
-        builder = BuilderConfig(
-            api_key=config.builder_api_key,
-            api_secret=config.builder_api_secret,
-            api_passphrase=config.builder_api_passphrase,
+        builder_creds = BuilderApiKeyCreds(
+            key=config.builder_api_key,
+            secret=config.builder_api_secret,
+            passphrase=config.builder_api_passphrase,
         )
+        builder_config = BuilderConfig(local_builder_creds=builder_creds)
         _clob_client = ClobClient(
             host=CLOB_API,
             key=config.poly_private_key,
             chain_id=137,
             creds=creds,
-            builder=builder,
+            builder_config=builder_config,
             signature_type=2,
             funder=config.poly_proxy_address,
         )
