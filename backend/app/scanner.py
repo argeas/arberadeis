@@ -238,8 +238,13 @@ async def scan_loop():
                 )
                 await telegram.notify_opportunity(opp)
 
-                # TODO: Execute the arb (Phase 2)
-                # For now, just log and alert
+                # Execute the arb
+                from app.executor import execute_arb
+                success = await execute_arb(opp)
+                if success:
+                    logger.info(f"[SCANNER] Arb executed: {opp.event_title[:40]}")
+                else:
+                    logger.info(f"[SCANNER] Arb skipped/failed: {opp.event_title[:40]}")
 
         except Exception as e:
             logger.error(f"[SCANNER] Error: {e}")

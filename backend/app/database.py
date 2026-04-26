@@ -1,15 +1,21 @@
-"""SQLite database for arbitrage trade logging."""
+"""SQLite database for arbitrage trade logging. Separate DBs for paper and live."""
 
 import aiosqlite
 from pathlib import Path
 from app.models import Opportunity, ArbLeg
+from app.config import config
 
-DB_PATH = Path("data/arb.db")
+PAPER_DB = Path("data/arb_paper.db")
+LIVE_DB = Path("data/arb_live.db")
 
 
-async def init_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as db:
+def _db_path() -> Path:
+    return PAPER_DB if config.paper_mode else LIVE_DB
+
+
+async def _create_tables(db_path: Path):
+    """Create all tables in a database."""
+    async with aiosqlite.connect(db_path) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS opportunities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,8 +91,15 @@ async def init_db():
         await db.commit()
 
 
+async def init_db():
+    """Initialize both paper and live databases."""
+    PAPER_DB.parent.mkdir(parents=True, exist_ok=True)
+    await _create_tables(PAPER_DB)
+    await _create_tables(LIVE_DB)
+
+
 async def save_opportunity(opp: Opportunity) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         cursor = await db.execute("""
             INSERT INTO opportunities (timestamp, strategy, event_title,
                 poly_condition_id, jup_market_id, kalshi_market_id,
@@ -107,7 +120,7 @@ async def save_opportunity(opp: Opportunity) -> int:
 
 
 async def save_leg(leg: ArbLeg) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         cursor = await db.execute("""
             INSERT INTO arb_legs (opportunity_id, timestamp, leg, venue, chain,
                 side, token_id, price, size, order_id, tx_hash, status,
@@ -124,7 +137,7 @@ async def save_leg(leg: ArbLeg) -> int:
 
 
 async def update_opportunity_status(opp_id: int, status: str, execution_time_ms: int = None):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         if execution_time_ms is not None:
             await db.execute("UPDATE opportunities SET status=?, execution_time_ms=? WHERE id=?",
                              (status, execution_time_ms, opp_id))
@@ -134,14 +147,14 @@ async def update_opportunity_status(opp_id: int, status: str, execution_time_ms:
 
 
 async def update_leg_status(leg_id: int, status: str, fill_price: float = None, pnl: float = None):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         await db.execute("UPDATE arb_legs SET status=?, fill_price=?, pnl=? WHERE id=?",
                          (status, fill_price, pnl, leg_id))
         await db.commit()
 
 
 async def get_recent_opportunities(limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM opportunities ORDER BY id DESC LIMIT ?", (limit,))
@@ -149,7 +162,7 @@ async def get_recent_opportunities(limit: int = 50) -> list[dict]:
 
 
 async def get_recent_legs(limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM arb_legs ORDER BY id DESC LIMIT ?", (limit,))
@@ -157,7 +170,7 @@ async def get_recent_legs(limit: int = 50) -> list[dict]:
 
 
 async def get_stats() -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         total = (await (await db.execute("SELECT COUNT(*) FROM opportunities")).fetchone())[0]
         executed = (await (await db.execute("SELECT COUNT(*) FROM opportunities WHERE status='executed'")).fetchone())[0]
         skipped = (await (await db.execute("SELECT COUNT(*) FROM opportunities WHERE status='skipped'")).fetchone())[0]

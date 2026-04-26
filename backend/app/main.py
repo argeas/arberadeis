@@ -125,3 +125,43 @@ async def get_config():
         "paper_mode": config.paper_mode,
         "scan_interval_ms": config.scan_interval_ms,
     }
+
+
+@app.post("/api/mode/paper")
+async def set_paper_mode():
+    """Switch to paper trading mode."""
+    config.paper_mode = True
+    logger.info("[MODE] Switched to PAPER mode")
+    return {"mode": "paper", "db": "arb_paper.db"}
+
+
+@app.post("/api/mode/live")
+async def set_live_mode():
+    """Switch to live trading mode. Requires confirmation."""
+    config.paper_mode = False
+    logger.warning("[MODE] >>> SWITCHED TO LIVE MODE — REAL FUNDS AT RISK <<<")
+    await telegram.send(
+        "🔴 <b>ArberAdeis switched to LIVE MODE</b>\n"
+        "Real orders will be placed."
+    )
+    return {"mode": "live", "db": "arb_live.db"}
+
+
+@app.get("/api/mode")
+async def get_mode():
+    return {"mode": "paper" if config.paper_mode else "live"}
+
+
+@app.post("/api/venues/{venue}/toggle")
+async def toggle_venue(venue: str):
+    """Toggle a venue on/off."""
+    if venue == "polymarket":
+        config.venue_polymarket_enabled = not config.venue_polymarket_enabled
+        return {"venue": venue, "enabled": config.venue_polymarket_enabled}
+    elif venue == "jupiter":
+        config.venue_jupiter_enabled = not config.venue_jupiter_enabled
+        return {"venue": venue, "enabled": config.venue_jupiter_enabled}
+    elif venue == "kalshi":
+        config.venue_kalshi_enabled = not config.venue_kalshi_enabled
+        return {"venue": venue, "enabled": config.venue_kalshi_enabled}
+    return {"error": "Unknown venue"}

@@ -20,9 +20,12 @@
         .card .value.negative { color: #f87171; }
         .card .value.neutral { color: #f59e0b; }
         .venue-badges { display: flex; gap: 6px; margin-bottom: 20px; }
-        .venue-badge { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .venue-badge { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; }
         .venue-badge.active { background: #065f46; color: #6ee7b7; }
         .venue-badge.inactive { background: #1e1e2e; color: #444; }
+        .mode-toggle { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+        .mode-toggle.paper { background: #854d0e; color: #fde047; }
+        .mode-toggle.live { background: #991b1b; color: #fca5a5; }
         .table-container { background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; overflow: hidden; }
         .table-header { padding: 12px 16px; border-bottom: 1px solid #1e1e2e; display: flex; justify-content: space-between; align-items: center; }
         .table-header h2 { font-size: 15px; color: #f59e0b; }
@@ -51,7 +54,10 @@
         </div>
     </div>
 
-    <div class="venue-badges" id="venues"></div>
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+        <div class="venue-badges" id="venues" style="margin-bottom:0;"></div>
+        <button class="mode-toggle paper" id="mode-btn" onclick="toggleMode()">PAPER</button>
+    </div>
 
     <div class="grid">
         <div class="card">
@@ -131,11 +137,16 @@
                 const mins = Math.floor((sec % 3600) / 60);
                 document.getElementById('uptime').textContent = 'Uptime: ' + hrs + 'h ' + mins + 'm';
 
-                // Venue badges
+                // Venue badges (clickable)
                 const venueDiv = document.getElementById('venues');
                 venueDiv.innerHTML = ['polymarket', 'jupiter', 'kalshi'].map(v =>
-                    '<span class="venue-badge ' + (d.venues.includes(v) ? 'active' : 'inactive') + '">' + v.toUpperCase() + '</span>'
+                    '<span class="venue-badge ' + (d.venues.includes(v) ? 'active' : 'inactive') + '" onclick="toggleVenue(\'' + v + '\')">' + v.toUpperCase() + '</span>'
                 ).join('');
+
+                // Mode button
+                const btn = document.getElementById('mode-btn');
+                btn.textContent = d.mode.toUpperCase();
+                btn.className = 'mode-toggle ' + d.mode;
 
                 document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
             } catch(e) {}
@@ -170,6 +181,23 @@
                     '</tr>';
                 }).join('');
             } catch(e) {}
+        }
+
+        async function toggleMode() {
+            const btn = document.getElementById('mode-btn');
+            const current = btn.textContent.trim();
+            if (current === 'PAPER') {
+                if (!confirm('Switch to LIVE mode? Real orders will be placed!')) return;
+                await fetch(API + '/api/mode/live', {method:'POST'});
+            } else {
+                await fetch(API + '/api/mode/paper', {method:'POST'});
+            }
+            fetchStatus();
+        }
+
+        async function toggleVenue(venue) {
+            await fetch(API + '/api/venues/' + venue + '/toggle', {method:'POST'});
+            fetchStatus();
         }
 
         fetchStatus();
