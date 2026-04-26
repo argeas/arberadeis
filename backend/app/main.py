@@ -214,10 +214,13 @@ async def set_live_mode():
     """Switch to live trading mode. Requires confirmation."""
     config.paper_mode = False
     logger.warning("[MODE] >>> SWITCHED TO LIVE MODE — REAL FUNDS AT RISK <<<")
-    await telegram.send(
-        "🔴 <b>ArberAdeis switched to LIVE MODE</b>\n"
-        "Real orders will be placed."
-    )
+    try:
+        await telegram.send(
+            "🔴 <b>ArberAdeis switched to LIVE MODE</b>\n"
+            "Real orders will be placed."
+        )
+    except Exception:
+        pass
     return {"mode": "live", "db": "arb_live.db"}
 
 
