@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 
 from app.config import config
 from app.models import MarketPair, MarketSide, Opportunity
-from app import polymarket_api, jupiter_api
+from app import polymarket_api, jupiter_api, kalshi_api
+from app.matcher import match_poly_to_kalshi, titles_match as _titles_match_score
 from app.database import save_opportunity
 from app import telegram
 
@@ -136,6 +137,48 @@ async def discover_jupiter_markets():
     return count
 
 
+async def discover_kalshi_markets():
+    """Fetch Kalshi markets and match to existing pairs."""
+    if "kalshi" not in config.active_venues:
+        return 0
+
+    logger.info("[SCANNER] Discovering Kalshi markets...")
+    count = 0
+
+    kalshi_markets = await kalshi_api.fetch_markets(status="open", limit=100)
+
+    for km in kalshi_markets:
+        yes_side, no_side = kalshi_api.parse_market_sides(km)
+        if not yes_side or not no_side:
+            continue
+
+        ticker = km.get("ticker", "")
+        title = km.get("title", "")
+
+        # Try to match with existing Polymarket pairs
+        matched = False
+        for key, pair in _market_pairs.items():
+            score = _titles_match_score(pair.event_title, title)
+            if score >= 0.6:
+                pair.kalshi_market_id = ticker
+                pair.sides[("kalshi", "YES")] = yes_side
+                pair.sides[("kalshi", "NO")] = no_side
+                matched = True
+                count += 1
+                break
+
+        if not matched:
+            key = f"kalshi_{ticker}"
+            if key not in _market_pairs:
+                _market_pairs[key] = MarketPair(event_title=title, kalshi_market_id=ticker)
+            _market_pairs[key].sides[("kalshi", "YES")] = yes_side
+            _market_pairs[key].sides[("kalshi", "NO")] = no_side
+            count += 1
+
+    logger.info(f"[SCANNER] Kalshi: {count} markets loaded")
+    return count
+
+
 def _titles_match(title_a: str, title_b: str) -> bool:
     """Simple title matching. Returns True if titles are likely the same event."""
     if not title_a or not title_b:
@@ -161,6 +204,7 @@ async def scan_for_opportunities() -> list[Opportunity]:
         _last_full_scan = now
         await discover_polymarket_markets()
         await discover_jupiter_markets()
+        await discover_kalshi_markets()
 
     opportunities = []
 

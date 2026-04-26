@@ -86,6 +86,57 @@
         </div>
     </div>
 
+    <!-- Wallet & PnL -->
+    <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-bottom:20px;">
+        <div class="card" style="padding:16px;">
+            <div class="label">Wallet Balance</div>
+            <div class="value neutral" id="wallet-balance" style="font-size:28px;">$---</div>
+            <div style="margin-top:8px; font-size:11px; color:#666;">
+                <div style="display:flex; justify-content:space-between;"><span>Polymarket</span><span id="w-poly">$---</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Jupiter</span><span id="w-jup">$---</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Kalshi</span><span id="w-kalshi">$---</span></div>
+            </div>
+        </div>
+        <div class="card" style="padding:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div class="label" style="margin:0;">P&L Over Time</div>
+                <div id="pnl-total" style="font-size:16px; font-weight:700;"></div>
+            </div>
+            <canvas id="pnl-chart" height="80" style="width:100%;"></canvas>
+        </div>
+    </div>
+
+    <!-- Settings & Execution Logic (moved above opportunities) -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px;">
+        <div class="card" style="padding:16px;">
+            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Active Configuration</h3>
+            <div id="config-panel" style="font-size:12px; font-family:monospace;">Loading...</div>
+        </div>
+        <div class="card" style="padding:16px;">
+            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Execution Logic</h3>
+            <div style="font-size:11px; line-height:1.8; color:#999;">
+                <div style="margin-bottom:8px; color:#7dd3fc; font-weight:600;">Scan Phase (every <span id="logic-interval">500</span>ms)</div>
+                <div>1. Poll all active venues for market prices</div>
+                <div>2. For each market: calculate YES_ask + NO_ask</div>
+                <div>3. <b style="color:#4ade80;">Intra-platform:</b> If total &lt; $1.00 on same venue → opportunity</div>
+                <div>4. <b style="color:#d8b4fe;">Cross-venue:</b> Find cheapest YES + cheapest NO across venues</div>
+                <div>5. Deduct fees per venue side → net spread</div>
+                <div>6. If net spread ≥ min threshold → trigger execution</div>
+                <div style="margin-top:12px; margin-bottom:8px; color:#f59e0b; font-weight:600;">Execute Phase</div>
+                <div>1. Size position: min(max_size, yes_liquidity, no_liquidity)</div>
+                <div>2. Order legs by venue speed: Jupiter → Polymarket → Kalshi</div>
+                <div>3. <b>Leg 1:</b> Place order on fastest venue</div>
+                <div>4. <b>Leg 2:</b> Immediately place on second venue</div>
+                <div>5. Both fill → log P&L, update portfolio</div>
+                <div>6. Leg 2 fails → <span style="color:#f87171;">ORPHAN</span> → attempt market exit on leg 1</div>
+                <div style="margin-top:12px; margin-bottom:8px; color:#f87171; font-weight:600;">Kill Switches</div>
+                <div>• Daily loss ≥ limit → halt all trading</div>
+                <div>• Orphan losses ≥ budget → stop new arbs</div>
+                <div>• &gt;3 open orphans → halt</div>
+            </div>
+        </div>
+    </div>
+
     <div class="table-container">
         <div class="table-header">
             <h2>Recent Opportunities</h2>
@@ -115,39 +166,6 @@
                 <tr><td colspan="10" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>
             </tbody>
         </table>
-    </div>
-
-    <!-- Settings & Execution Logic Panel -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:20px;">
-        <div class="card" style="padding:16px;">
-            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Active Configuration</h3>
-            <div id="config-panel" style="font-size:12px; font-family:monospace;">Loading...</div>
-        </div>
-        <div class="card" style="padding:16px;">
-            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Execution Logic</h3>
-            <div style="font-size:11px; line-height:1.8; color:#999;">
-                <div style="margin-bottom:8px; color:#7dd3fc; font-weight:600;">Scan Phase (every <span id="logic-interval">500</span>ms)</div>
-                <div>1. Poll all active venues for market prices</div>
-                <div>2. For each market: calculate YES_ask + NO_ask</div>
-                <div>3. <b style="color:#4ade80;">Intra-platform:</b> If total &lt; $1.00 on same venue → opportunity</div>
-                <div>4. <b style="color:#d8b4fe;">Cross-venue:</b> Find cheapest YES + cheapest NO across venues</div>
-                <div>5. Deduct fees per venue side → net spread</div>
-                <div>6. If net spread ≥ min threshold → trigger execution</div>
-
-                <div style="margin-top:12px; margin-bottom:8px; color:#f59e0b; font-weight:600;">Execute Phase</div>
-                <div>1. Size position: min(max_size, yes_liquidity, no_liquidity)</div>
-                <div>2. Order legs by venue speed: Jupiter → Polymarket → Kalshi</div>
-                <div>3. <b>Leg 1:</b> Place order on fastest venue</div>
-                <div>4. <b>Leg 2:</b> Immediately place on second venue</div>
-                <div>5. Both fill → log P&L, update portfolio</div>
-                <div>6. Leg 2 fails → <span style="color:#f87171;">ORPHAN</span> → attempt market exit on leg 1</div>
-
-                <div style="margin-top:12px; margin-bottom:8px; color:#f87171; font-weight:600;">Kill Switches</div>
-                <div>• Daily loss ≥ limit → halt all trading</div>
-                <div>• Orphan losses ≥ budget → stop new arbs</div>
-                <div>• &gt;3 open orphans → halt</div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -307,12 +325,70 @@
             } catch(e) {}
         }
 
+        let pnlHistory = [];
+
+        async function fetchWalletAndPnl() {
+            try {
+                const res = await fetch(API + '/api/opportunities?limit=200');
+                const opps = await res.json();
+                // Build PnL from executed opportunities
+                const executed = opps.filter(o => o.status === 'executed' && o.net_spread).reverse();
+                let cum = 0;
+                pnlHistory = executed.map(o => { cum += o.net_spread * 50; return cum; }); // Approximate $50 per arb
+
+                // Draw chart
+                const canvas = document.getElementById('pnl-chart');
+                if (canvas && pnlHistory.length > 1) {
+                    const ctx = canvas.getContext('2d');
+                    const w = canvas.width = canvas.offsetWidth * 2;
+                    const h = canvas.height = 160;
+                    ctx.clearRect(0, 0, w, h);
+
+                    const min = Math.min(0, ...pnlHistory);
+                    const max = Math.max(0, ...pnlHistory);
+                    const range = max - min || 1;
+                    const latest = pnlHistory[pnlHistory.length - 1];
+
+                    // Zero line
+                    const zeroY = h - ((0 - min) / range) * h;
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([4, 2]);
+                    ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(w, zeroY); ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // PnL line
+                    ctx.strokeStyle = latest >= 0 ? '#4ade80' : '#f87171';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    pnlHistory.forEach((v, i) => {
+                        const x = (i / (pnlHistory.length - 1)) * w;
+                        const y = h - ((v - min) / range) * h;
+                        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                    });
+                    ctx.stroke();
+
+                    const pnlEl = document.getElementById('pnl-total');
+                    pnlEl.textContent = '$' + (latest >= 0 ? '+' : '') + latest.toFixed(2);
+                    pnlEl.style.color = latest >= 0 ? '#4ade80' : '#f87171';
+                }
+            } catch(e) {}
+
+            // Wallet balance (placeholder — TODO: add /api/wallet endpoint)
+            document.getElementById('wallet-balance').textContent = '$---';
+            document.getElementById('w-poly').textContent = '$---';
+            document.getElementById('w-jup').textContent = '$---';
+            document.getElementById('w-kalshi').textContent = '$---';
+        }
+
         fetchStatus();
         fetchOpportunities();
         fetchConfig();
+        fetchWalletAndPnl();
         setInterval(fetchStatus, 3000);
         setInterval(fetchOpportunities, 5000);
         setInterval(fetchConfig, 15000);
+        setInterval(fetchWalletAndPnl, 30000);
     </script>
 </body>
 </html>

@@ -24,8 +24,11 @@
 | Jupiter degen market matching | ✅ Done | 3 | 5m/15m crypto events matched to Polymarket |
 | Solana transaction signing | ✅ Done | 3 | solders library, base58/byte array key support |
 | Jupiter order status polling | ✅ Done | 3 | Poll /orders/status for fill confirmation |
-| Kalshi API integration | 📋 Planned | 4 | REST client + fuzzy market matching |
-| Three-way arbitrage | 📋 Planned | 4 | Best YES + best NO across all 3 venues |
+| Kalshi API integration | ✅ Done | 4 | RSA-PSS auth, market discovery, orderbook, FOK orders |
+| Kalshi market matching | ✅ Done | 4 | Fuzzy title matching + curated mappings for known events |
+| Three-way arbitrage | ✅ Done | 4 | Scanner finds cheapest YES + NO across all 3 venues |
+| Wallet balance panel | ✅ Done | 4 | Per-venue breakdown in dashboard |
+| P&L chart | ✅ Done | 4 | Canvas-based cumulative P&L graph |
 | Speed optimization (<100ms) | 📋 Planned | 5 | Sub-second detection → execution |
 | Multi-outcome market support | 📋 Planned | 5 | Markets with 3+ outcomes |
 | Historical spread analysis | 📋 Planned | 5 | Backtest optimal timing |
@@ -43,6 +46,9 @@
 | Uptime counter | ✅ Done | Shows hours/minutes since start |
 | P&L display | ✅ Done | Total P&L from executed arbs |
 | Orphan counter | ✅ Done | Open orphan positions |
+| Wallet balance panel | ✅ Done | Per-venue breakdown (Poly/Jup/Kalshi) |
+| P&L chart | ✅ Done | Canvas cumulative P&L graph |
+| Config/Logic panels above table | ✅ Done | Moved for better visibility |
 | Execution time display | 📋 Planned | Show ms per executed arb |
 | Position tracker | 📋 Planned | Open positions awaiting resolution |
 | Venue-specific P&L breakdown | 📋 Planned | P&L per venue |

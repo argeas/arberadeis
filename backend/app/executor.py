@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from app.config import config
 from app.models import Opportunity, ArbLeg, PortfolioState
-from app import polymarket_api, jupiter_api
+from app import polymarket_api, jupiter_api, kalshi_api
 from app.database import save_leg, update_leg_status, update_opportunity_status
 from app import telegram
 
@@ -162,8 +162,8 @@ async def _place_order(leg: ArbLeg) -> str | None:
         return await polymarket_api.place_order(leg.token_id, leg.side, leg.size, leg.price)
     elif leg.venue == "jupiter":
         return await jupiter_api.create_order(leg.token_id, leg.side, leg.size, leg.price)
-    # elif leg.venue == "kalshi":
-    #     return await kalshi_api.place_order(...)
+    elif leg.venue == "kalshi":
+        return await kalshi_api.place_order(leg.token_id, leg.side, leg.size, leg.price)
     return None
 
 
