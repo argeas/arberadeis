@@ -401,7 +401,7 @@
                 // Build PnL from executed opportunities
                 const executed = opps.filter(o => o.status === 'executed' && o.net_spread).reverse();
                 let cum = 0;
-                pnlHistory = executed.map(o => { cum += o.net_spread * 50; return cum; }); // Approximate $50 per arb
+                pnlHistory = executed.map(o => { cum += o.net_spread * 5; return cum; }); // $5 position size
 
                 // Draw chart
                 const canvas = document.getElementById('pnl-chart');
