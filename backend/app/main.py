@@ -128,6 +128,45 @@ async def get_config():
     }
 
 
+@app.put("/api/config")
+async def update_config(body: dict):
+    """Update runtime configuration. Merges with current values."""
+    venues = body.get("venues", {})
+    if "polymarket" in venues:
+        config.venue_polymarket_enabled = venues["polymarket"]
+    if "jupiter" in venues:
+        config.venue_jupiter_enabled = venues["jupiter"]
+    if "kalshi" in venues:
+        config.venue_kalshi_enabled = venues["kalshi"]
+
+    risk = body.get("risk", {})
+    if "max_position_size" in risk:
+        config.max_position_size = float(risk["max_position_size"])
+    if "min_net_spread" in risk:
+        config.min_net_spread = float(risk["min_net_spread"])
+    if "daily_loss_limit" in risk:
+        config.daily_loss_limit = float(risk["daily_loss_limit"])
+    if "orphan_daily_budget" in risk:
+        config.orphan_daily_budget = float(risk["orphan_daily_budget"])
+
+    fees = body.get("fees", {})
+    if "polymarket" in fees:
+        config.poly_fee = float(fees["polymarket"])
+    if "jupiter" in fees:
+        config.jupiter_fee = float(fees["jupiter"])
+    if "kalshi" in fees:
+        config.kalshi_fee = float(fees["kalshi"])
+
+    if "scan_interval_ms" in body:
+        config.scan_interval_ms = int(body["scan_interval_ms"])
+
+    if "paper_mode" in body:
+        config.paper_mode = body["paper_mode"]
+
+    logger.info(f"[CONFIG] Updated: venues={config.active_venues} spread={config.min_net_spread} mode={'paper' if config.paper_mode else 'live'}")
+    return await get_config()
+
+
 @app.get("/api/wallet")
 async def wallet():
     """Get wallet balances across all venues."""

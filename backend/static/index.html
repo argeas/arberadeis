@@ -111,6 +111,8 @@
         <div class="card" style="padding:16px;">
             <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Active Configuration</h3>
             <div id="config-panel" style="font-size:12px; font-family:monospace;">Loading...</div>
+            <button id="apply-btn" onclick="applyConfig()" style="margin-top:12px; width:100%; padding:8px; border-radius:6px; background:#f59e0b; color:#000; font-weight:700; font-size:13px; border:none; cursor:pointer;">Apply Settings</button>
+            <div id="apply-status" style="font-size:11px; color:#4ade80; margin-top:4px; text-align:center;"></div>
         </div>
         <div class="card" style="padding:16px;">
             <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Execution Logic</h3>
@@ -269,6 +271,9 @@
             fetchStatus();
         }
 
+        const inp = (id, val, w='60px') => `<input id="${id}" value="${val}" style="width:${w}; padding:2px 4px; border-radius:3px; background:#1a1a24; border:1px solid #333; color:#fff; font-size:11px; font-family:monospace; text-align:right;" />`;
+        const tog = (id, on) => `<label style="cursor:pointer;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} style="accent-color:#f59e0b;" /> <span style="color:${on ? '#6ee7b7' : '#555'}">${on ? 'ON' : 'OFF'}</span></label>`;
+
         async function fetchConfig() {
             try {
                 const res = await fetch(API + '/api/config');
@@ -276,53 +281,115 @@
                 const panel = document.getElementById('config-panel');
                 document.getElementById('logic-interval').textContent = c.scan_interval_ms;
 
-                const venueRows = Object.entries(c.venues).map(([v, on]) =>
-                    `<div style="display:flex; justify-content:space-between; padding:2px 0;">` +
-                    `<span style="color:${on ? '#6ee7b7' : '#555'}">${v.toUpperCase()}</span>` +
-                    `<span style="color:${on ? '#6ee7b7' : '#555'}">${on ? '● ON' : '○ OFF'}</span></div>`
-                ).join('');
-
-                const feeRows = Object.entries(c.fees).map(([v, f]) =>
-                    `<div style="display:flex; justify-content:space-between; padding:2px 0;">` +
-                    `<span style="color:#888">${v}</span><span>${(f * 100).toFixed(1)}% per side</span></div>`
-                ).join('');
-
                 panel.innerHTML = `
                     <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
                         <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Mode</div>
-                        <div style="font-size:16px; font-weight:700; color:${c.paper_mode ? '#fde047' : '#f87171'}">
-                            ${c.paper_mode ? '📝 PAPER' : '🔴 LIVE'}
-                        </div>
+                        <label style="cursor:pointer; font-size:14px; font-weight:700;">
+                            <input type="checkbox" id="cfg-paper" ${c.paper_mode ? 'checked' : ''} style="accent-color:#f59e0b;" />
+                            <span id="cfg-paper-label" style="color:${c.paper_mode ? '#fde047' : '#f87171'}">${c.paper_mode ? '📝 PAPER' : '🔴 LIVE'}</span>
+                        </label>
                     </div>
 
                     <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
                         <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Venues</div>
-                        ${venueRows}
+                        <div style="display:flex; justify-content:space-between; padding:3px 0;"><span>Polymarket</span>${tog('cfg-v-poly', c.venues.polymarket)}</div>
+                        <div style="display:flex; justify-content:space-between; padding:3px 0;"><span>Jupiter</span>${tog('cfg-v-jup', c.venues.jupiter)}</div>
+                        <div style="display:flex; justify-content:space-between; padding:3px 0;"><span>Kalshi</span>${tog('cfg-v-kalshi', c.venues.kalshi)}</div>
                     </div>
 
                     <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
                         <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Risk</div>
-                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
-                            <span style="color:#888">Max position</span><span>$${c.risk.max_position_size}</span></div>
-                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
-                            <span style="color:#888">Min net spread</span><span>${(c.risk.min_net_spread * 100).toFixed(1)}%</span></div>
-                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
-                            <span style="color:#888">Daily loss limit</span><span>$${c.risk.daily_loss_limit}</span></div>
-                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
-                            <span style="color:#888">Orphan budget</span><span>$${c.risk.orphan_daily_budget}/day</span></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Max position $</span>${inp('cfg-maxpos', c.risk.max_position_size)}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Min net spread %</span>${inp('cfg-spread', (c.risk.min_net_spread*100).toFixed(1))}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Daily loss limit $</span>${inp('cfg-dailyloss', c.risk.daily_loss_limit)}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Orphan budget $/day</span>${inp('cfg-orphan', c.risk.orphan_daily_budget)}</div>
+                    </div>
+
+                    <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Fees (% per side)</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Polymarket</span>${inp('cfg-fee-poly', (c.fees.polymarket*100).toFixed(1), '50px')}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Jupiter</span>${inp('cfg-fee-jup', (c.fees.jupiter*100).toFixed(1), '50px')}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                            <span style="color:#888">Kalshi</span>${inp('cfg-fee-kalshi', (c.fees.kalshi*100).toFixed(1), '50px')}</div>
                     </div>
 
                     <div style="padding:8px; background:#0e0e16; border-radius:6px;">
-                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Fees</div>
-                        ${feeRows}
-                    </div>
-
-                    <div style="margin-top:10px; padding:8px; background:#0e0e16; border-radius:6px;">
-                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Scan interval</div>
-                        <div>${c.scan_interval_ms}ms</div>
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Scan interval (ms)</div>
+                        ${inp('cfg-interval', c.scan_interval_ms, '80px')}
                     </div>
                 `;
+
+                // Wire paper mode toggle label
+                document.getElementById('cfg-paper').addEventListener('change', function() {
+                    const lbl = document.getElementById('cfg-paper-label');
+                    lbl.textContent = this.checked ? '📝 PAPER' : '🔴 LIVE';
+                    lbl.style.color = this.checked ? '#fde047' : '#f87171';
+                });
             } catch(e) {}
+        }
+
+        async function applyConfig() {
+            const btn = document.getElementById('apply-btn');
+            const status = document.getElementById('apply-status');
+            btn.disabled = true;
+            btn.textContent = 'Applying...';
+
+            const isPaper = document.getElementById('cfg-paper')?.checked ?? true;
+            if (!isPaper && !confirm('⚠️ Switching to LIVE mode — real orders will be placed. Continue?')) {
+                btn.disabled = false;
+                btn.textContent = 'Apply Settings';
+                return;
+            }
+
+            const body = {
+                paper_mode: isPaper,
+                venues: {
+                    polymarket: document.getElementById('cfg-v-poly')?.checked ?? false,
+                    jupiter: document.getElementById('cfg-v-jup')?.checked ?? false,
+                    kalshi: document.getElementById('cfg-v-kalshi')?.checked ?? false,
+                },
+                risk: {
+                    max_position_size: parseFloat(document.getElementById('cfg-maxpos')?.value || 50),
+                    min_net_spread: parseFloat(document.getElementById('cfg-spread')?.value || 1.5) / 100,
+                    daily_loss_limit: parseFloat(document.getElementById('cfg-dailyloss')?.value || 100),
+                    orphan_daily_budget: parseFloat(document.getElementById('cfg-orphan')?.value || 50),
+                },
+                fees: {
+                    polymarket: parseFloat(document.getElementById('cfg-fee-poly')?.value || 1) / 100,
+                    jupiter: parseFloat(document.getElementById('cfg-fee-jup')?.value || 0.8) / 100,
+                    kalshi: parseFloat(document.getElementById('cfg-fee-kalshi')?.value || 2) / 100,
+                },
+                scan_interval_ms: parseInt(document.getElementById('cfg-interval')?.value || 500),
+            };
+
+            try {
+                const res = await fetch(API + '/api/config', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (res.ok) {
+                    status.textContent = '✓ Settings applied';
+                    status.style.color = '#4ade80';
+                    setTimeout(() => { status.textContent = ''; }, 3000);
+                    fetchStatus();
+                } else {
+                    status.textContent = '✗ Failed to apply';
+                    status.style.color = '#f87171';
+                }
+            } catch(e) {
+                status.textContent = '✗ Error';
+                status.style.color = '#f87171';
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Apply Settings';
         }
 
         let pnlHistory = [];
