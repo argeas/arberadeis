@@ -50,13 +50,22 @@
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
             <span style="font-size:12px; color:#f59e0b;" id="uptime">Uptime: ---</span>
-            <span id="mode" class="mode paper">PAPER</span>
         </div>
     </div>
 
+    <!-- Paper / Live Tabs -->
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+        <div style="display:flex; gap:2px; background:#1a1a24; border-radius:8px; padding:3px; border:1px solid #333;">
+            <button id="tab-paper" onclick="switchTab('paper')" style="padding:8px 20px; border-radius:6px; border:none; cursor:pointer; font-weight:700; font-size:13px; background:#854d0e; color:#fde047;">📝 PAPER</button>
+            <button id="tab-live" onclick="switchTab('live')" style="padding:8px 20px; border-radius:6px; border:none; cursor:pointer; font-weight:700; font-size:13px; background:transparent; color:#555;">🔴 LIVE</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:11px; color:#888;">Active mode:</span>
+            <span id="active-mode-badge" style="padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#854d0e; color:#fde047;">PAPER</span>
+            <button id="enable-btn" onclick="toggleActiveMode()" style="padding:3px 10px; border-radius:4px; font-size:10px; font-weight:600; border:1px solid #333; cursor:pointer; background:#1e1e2e; color:#888;">Switch to LIVE</button>
+        </div>
+        <div style="flex:1;"></div>
         <div class="venue-badges" id="venues" style="margin-bottom:0;"></div>
-        <button class="mode-toggle paper" id="mode-btn" onclick="toggleMode()">PAPER</button>
     </div>
 
     <div class="grid">
@@ -175,7 +184,7 @@
 
         async function fetchStatus() {
             try {
-                const res = await fetch(API + '/api/status');
+                const res = await fetch(API + '/api/status?mode=' + viewMode);
                 const d = await res.json();
 
                 document.getElementById('mode').textContent = d.mode.toUpperCase();
@@ -195,6 +204,16 @@
                 const mins = Math.floor((sec % 3600) / 60);
                 document.getElementById('uptime').textContent = 'Uptime: ' + hrs + 'h ' + mins + 'm';
 
+                // Active mode badge + toggle button
+                const modeRes = await fetch(API + '/api/mode');
+                const activeMode = (await modeRes.json()).mode;
+                const badge = document.getElementById('active-mode-badge');
+                badge.textContent = activeMode.toUpperCase();
+                badge.style.background = activeMode === 'paper' ? '#854d0e' : '#991b1b';
+                badge.style.color = activeMode === 'paper' ? '#fde047' : '#fca5a5';
+                const toggleBtn = document.getElementById('enable-btn');
+                toggleBtn.textContent = activeMode === 'paper' ? 'Switch to LIVE' : 'Switch to PAPER';
+
                 // Venue badges (clickable)
                 const venueDiv = document.getElementById('venues');
                 venueDiv.innerHTML = ['polymarket', 'jupiter', 'kalshi'].map(v =>
@@ -213,7 +232,7 @@
         async function fetchOpportunities() {
             try {
                 const offset = currentPage * PAGE_SIZE;
-                const res = await fetch(API + '/api/opportunities?limit=' + PAGE_SIZE + '&offset=' + offset);
+                const res = await fetch(API + '/api/opportunities?limit=' + PAGE_SIZE + '&offset=' + offset + '&mode=' + viewMode);
                 const opps = await res.json();
                 document.getElementById('page-info').textContent = 'Page ' + (currentPage + 1) + (opps.length < PAGE_SIZE ? ' (last)' : '');
                 const tbody = document.getElementById('opps-body');
@@ -245,6 +264,39 @@
 
         const PAGE_SIZE = 30;
         let currentPage = 0;
+        let viewMode = 'paper';  // Which tab we're viewing
+
+        function switchTab(mode) {
+            viewMode = mode;
+            currentPage = 0;
+            // Update tab styles
+            const paperTab = document.getElementById('tab-paper');
+            const liveTab = document.getElementById('tab-live');
+            if (mode === 'paper') {
+                paperTab.style.background = '#854d0e'; paperTab.style.color = '#fde047';
+                liveTab.style.background = 'transparent'; liveTab.style.color = '#555';
+            } else {
+                liveTab.style.background = '#991b1b'; liveTab.style.color = '#fca5a5';
+                paperTab.style.background = 'transparent'; paperTab.style.color = '#555';
+            }
+            // Refresh everything for the selected tab
+            fetchStatus();
+            fetchOpportunities();
+            fetchConfig();
+            fetchWalletAndPnl();
+        }
+
+        async function toggleActiveMode() {
+            const res = await fetch(API + '/api/mode');
+            const current = (await res.json()).mode;
+            if (current === 'paper') {
+                if (!confirm('⚠️ Switch ACTIVE mode to LIVE? Real orders will be placed!')) return;
+                await fetch(API + '/api/mode/live', {method:'POST'});
+            } else {
+                await fetch(API + '/api/mode/paper', {method:'POST'});
+            }
+            fetchStatus();
+        }
 
         function prevPage() {
             if (currentPage > 0) { currentPage--; fetchOpportunities(); }
@@ -252,18 +304,6 @@
         function nextPage() {
             currentPage++;
             fetchOpportunities();
-        }
-
-        async function toggleMode() {
-            const btn = document.getElementById('mode-btn');
-            const current = btn.textContent.trim();
-            if (current === 'PAPER') {
-                if (!confirm('Switch to LIVE mode? Real orders will be placed!')) return;
-                await fetch(API + '/api/mode/live', {method:'POST'});
-            } else {
-                await fetch(API + '/api/mode/paper', {method:'POST'});
-            }
-            fetchStatus();
         }
 
         async function toggleVenue(venue) {
@@ -396,7 +436,7 @@
 
         async function fetchWalletAndPnl() {
             try {
-                const res = await fetch(API + '/api/opportunities?limit=200');
+                const res = await fetch(API + '/api/opportunities?limit=200&mode=' + viewMode);
                 const opps = await res.json();
                 // Build PnL from executed opportunities
                 const executed = opps.filter(o => o.status === 'executed' && o.net_spread).reverse();

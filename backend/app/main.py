@@ -79,12 +79,12 @@ async def health():
 
 
 @app.get("/api/status")
-async def status():
+async def status(mode: str = None):
     import time
     uptime = int(time.time() - _start_time) if _start_time else 0
-    stats = await get_stats()
+    stats = await get_stats(mode)
     return {
-        "mode": "paper" if config.paper_mode else "live",
+        "mode": mode or ("paper" if config.paper_mode else "live"),
         "venues": config.active_venues,
         "uptime_seconds": uptime,
         "markets_tracked": len(_market_pairs),
@@ -95,13 +95,13 @@ async def status():
 
 
 @app.get("/api/opportunities")
-async def list_opportunities(limit: int = 30, offset: int = 0):
-    return await get_recent_opportunities(limit, offset)
+async def list_opportunities(limit: int = 30, offset: int = 0, mode: str = None):
+    return await get_recent_opportunities(limit, offset, mode)
 
 
 @app.get("/api/legs")
-async def list_legs(limit: int = 50):
-    return await get_recent_legs(limit)
+async def list_legs(limit: int = 50, mode: str = None):
+    return await get_recent_legs(limit, mode)
 
 
 @app.get("/api/config")

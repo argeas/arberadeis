@@ -9,7 +9,12 @@ PAPER_DB = Path("data/arb_paper.db")
 LIVE_DB = Path("data/arb_live.db")
 
 
-def _db_path() -> Path:
+def _db_path(mode: str = None) -> Path:
+    """Get DB path. mode='paper'|'live' or None for current config."""
+    if mode == "paper":
+        return PAPER_DB
+    elif mode == "live":
+        return LIVE_DB
     return PAPER_DB if config.paper_mode else LIVE_DB
 
 
@@ -153,24 +158,24 @@ async def update_leg_status(leg_id: int, status: str, fill_price: float = None, 
         await db.commit()
 
 
-async def get_recent_opportunities(limit: int = 50, offset: int = 0) -> list[dict]:
-    async with aiosqlite.connect(_db_path()) as db:
+async def get_recent_opportunities(limit: int = 50, offset: int = 0, mode: str = None) -> list[dict]:
+    async with aiosqlite.connect(_db_path(mode)) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM opportunities ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
         return [dict(row) for row in await cursor.fetchall()]
 
 
-async def get_recent_legs(limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(_db_path()) as db:
+async def get_recent_legs(limit: int = 50, mode: str = None) -> list[dict]:
+    async with aiosqlite.connect(_db_path(mode)) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM arb_legs ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(row) for row in await cursor.fetchall()]
 
 
-async def get_stats() -> dict:
-    async with aiosqlite.connect(_db_path()) as db:
+async def get_stats(mode: str = None) -> dict:
+    async with aiosqlite.connect(_db_path(mode)) as db:
         total = (await (await db.execute("SELECT COUNT(*) FROM opportunities")).fetchone())[0]
         executed = (await (await db.execute("SELECT COUNT(*) FROM opportunities WHERE status='executed'")).fetchone())[0]
         skipped = (await (await db.execute("SELECT COUNT(*) FROM opportunities WHERE status='skipped'")).fetchone())[0]
