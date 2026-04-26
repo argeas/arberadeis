@@ -454,6 +454,20 @@
 
                 // Draw chart
                 const canvas = document.getElementById('pnl-chart');
+                const pnlEl = document.getElementById('pnl-total');
+                if (canvas && pnlHistory.length <= 1) {
+                    // Clear chart when no data
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = canvas.offsetWidth * 2;
+                    canvas.height = 160;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#444';
+                    ctx.font = '12px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('No executed trades', canvas.width/2, 80);
+                    pnlEl.textContent = '$0.00';
+                    pnlEl.style.color = '#888';
+                }
                 if (canvas && pnlHistory.length > 1) {
                     const ctx = canvas.getContext('2d');
                     const w = canvas.width = canvas.offsetWidth * 2;
@@ -484,7 +498,6 @@
                     });
                     ctx.stroke();
 
-                    const pnlEl = document.getElementById('pnl-total');
                     pnlEl.textContent = '$' + (latest >= 0 ? '+' : '') + latest.toFixed(2);
                     pnlEl.style.color = latest >= 0 ? '#4ade80' : '#f87171';
                 }
