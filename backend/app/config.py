@@ -25,6 +25,7 @@ class Config(BaseSettings):
     solana_private_key: str = ""
     solana_rpc_url: str = "https://api.mainnet-beta.solana.com"
     jito_block_engine_url: str = ""
+    jupiter_api_key: str = ""  # From developers.jup.ag/portal
 
     # === Kalshi ===
     kalshi_api_key: str = ""

@@ -97,18 +97,37 @@ async def discover_jupiter_markets():
                 _market_pairs[key].sides[("jupiter", "NO")] = no_side
                 count += 1
 
-    # Also fetch degen/crypto events (5m, 15m)
+    # Fetch degen/crypto events (5m, 15m) — these directly match Polymarket crypto markets
     degen_events = await jupiter_api.fetch_degen_events()
     for event in degen_events:
         event_id = event.get("id") or event.get("eventId", "")
         title = event.get("title", "")
         markets = event.get("markets", [])
+        if not markets:
+            markets = await jupiter_api.fetch_event_markets(event_id)
+
         for m in markets:
             yes_side, no_side = jupiter_api.parse_market_sides(m)
-            if yes_side and no_side:
-                key = f"jup_degen_{yes_side.market_id}"
+            if not yes_side or not no_side:
+                continue
+
+            jup_market_id = yes_side.market_id
+
+            # Try to match with Polymarket degen markets by title
+            matched = False
+            for key, pair in _market_pairs.items():
+                if key.startswith("poly_") and _titles_match(pair.event_title, title):
+                    pair.jup_market_id = jup_market_id
+                    pair.sides[("jupiter", "YES")] = yes_side
+                    pair.sides[("jupiter", "NO")] = no_side
+                    matched = True
+                    count += 1
+                    break
+
+            if not matched:
+                key = f"jup_degen_{jup_market_id}"
                 if key not in _market_pairs:
-                    _market_pairs[key] = MarketPair(event_title=title, jup_market_id=yes_side.market_id)
+                    _market_pairs[key] = MarketPair(event_title=title, jup_market_id=jup_market_id)
                 _market_pairs[key].sides[("jupiter", "YES")] = yes_side
                 _market_pairs[key].sides[("jupiter", "NO")] = no_side
                 count += 1
