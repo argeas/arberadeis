@@ -89,7 +89,12 @@
     <div class="table-container">
         <div class="table-header">
             <h2>Recent Opportunities</h2>
-            <span class="updated" id="updated"></span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <button onclick="prevPage()" style="padding:4px 10px; border-radius:4px; background:#1e1e2e; color:#888; border:1px solid #333; cursor:pointer; font-size:11px;">← Prev</button>
+                <span style="font-size:11px; color:#666;" id="page-info">Page 1</span>
+                <button onclick="nextPage()" style="padding:4px 10px; border-radius:4px; background:#1e1e2e; color:#888; border:1px solid #333; cursor:pointer; font-size:11px;">Next →</button>
+                <span class="updated" id="updated"></span>
+            </div>
         </div>
         <table>
             <thead>
@@ -154,8 +159,10 @@
 
         async function fetchOpportunities() {
             try {
-                const res = await fetch(API + '/api/opportunities?limit=30');
+                const offset = currentPage * PAGE_SIZE;
+                const res = await fetch(API + '/api/opportunities?limit=' + PAGE_SIZE + '&offset=' + offset);
                 const opps = await res.json();
+                document.getElementById('page-info').textContent = 'Page ' + (currentPage + 1) + (opps.length < PAGE_SIZE ? ' (last)' : '');
                 const tbody = document.getElementById('opps-body');
 
                 if (opps.length === 0) {
@@ -181,6 +188,17 @@
                     '</tr>';
                 }).join('');
             } catch(e) {}
+        }
+
+        const PAGE_SIZE = 30;
+        let currentPage = 0;
+
+        function prevPage() {
+            if (currentPage > 0) { currentPage--; fetchOpportunities(); }
+        }
+        function nextPage() {
+            currentPage++;
+            fetchOpportunities();
         }
 
         async function toggleMode() {

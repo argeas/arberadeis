@@ -94,8 +94,8 @@ async def status():
 
 
 @app.get("/api/opportunities")
-async def list_opportunities(limit: int = 50):
-    return await get_recent_opportunities(limit)
+async def list_opportunities(limit: int = 30, offset: int = 0):
+    return await get_recent_opportunities(limit, offset)
 
 
 @app.get("/api/legs")

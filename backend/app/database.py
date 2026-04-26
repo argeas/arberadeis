@@ -153,11 +153,11 @@ async def update_leg_status(leg_id: int, status: str, fill_price: float = None, 
         await db.commit()
 
 
-async def get_recent_opportunities(limit: int = 50) -> list[dict]:
+async def get_recent_opportunities(limit: int = 50, offset: int = 0) -> list[dict]:
     async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM opportunities ORDER BY id DESC LIMIT ?", (limit,))
+            "SELECT * FROM opportunities ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
         return [dict(row) for row in await cursor.fetchall()]
 
 
