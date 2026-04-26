@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArberAdeis — Prediction Market Arbitrage</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0a0a0f; color: #e0e0e0; padding: 16px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 16px; background: #12121a; border-radius: 8px; border: 1px solid #1e1e2e; }
+        .header h1 { font-size: 20px; color: #f59e0b; }
+        .mode { padding: 4px 12px; border-radius: 4px; font-size: 13px; font-weight: 600; }
+        .mode.paper { background: #854d0e; color: #fde047; }
+        .mode.live { background: #991b1b; color: #fca5a5; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; padding: 16px; }
+        .card .label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+        .card .value { font-size: 22px; font-weight: 700; }
+        .card .value.positive { color: #4ade80; }
+        .card .value.negative { color: #f87171; }
+        .card .value.neutral { color: #f59e0b; }
+        .venue-badges { display: flex; gap: 6px; margin-bottom: 20px; }
+        .venue-badge { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .venue-badge.active { background: #065f46; color: #6ee7b7; }
+        .venue-badge.inactive { background: #1e1e2e; color: #444; }
+        .table-container { background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; overflow: hidden; }
+        .table-header { padding: 12px 16px; border-bottom: 1px solid #1e1e2e; display: flex; justify-content: space-between; align-items: center; }
+        .table-header h2 { font-size: 15px; color: #f59e0b; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th { text-align: left; padding: 8px 12px; color: #666; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid #1e1e2e; }
+        td { padding: 8px 12px; border-bottom: 1px solid #0e0e16; }
+        tr:hover { background: #16161f; }
+        .spread-positive { color: #4ade80; font-weight: 700; }
+        .spread-negative { color: #f87171; }
+        .strategy { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+        .strategy.intra { background: #1e3a5f; color: #7dd3fc; }
+        .strategy.cross_chain { background: #3b0764; color: #d8b4fe; }
+        .strategy.cross_platform { background: #064e3b; color: #6ee7b7; }
+        .updated { font-size: 11px; color: #444; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>ArberAdeis</h1>
+            <span style="font-size:12px; color:#888;">Multi-Venue Prediction Market Arbitrage</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <span style="font-size:12px; color:#f59e0b;" id="uptime">Uptime: ---</span>
+            <span id="mode" class="mode paper">PAPER</span>
+        </div>
+    </div>
+
+    <div class="venue-badges" id="venues"></div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="label">Markets Tracked</div>
+            <div class="value neutral" id="markets">0</div>
+        </div>
+        <div class="card">
+            <div class="label">Opportunities Found</div>
+            <div class="value neutral" id="total-opps">0</div>
+        </div>
+        <div class="card">
+            <div class="label">Executed</div>
+            <div class="value positive" id="executed">0</div>
+        </div>
+        <div class="card">
+            <div class="label">Total P&L</div>
+            <div class="value" id="total-pnl">$0.00</div>
+        </div>
+        <div class="card">
+            <div class="label">Open Orphans</div>
+            <div class="value" id="orphans">0</div>
+        </div>
+        <div class="card">
+            <div class="label">Min Spread</div>
+            <div class="value neutral" id="min-spread">0%</div>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <div class="table-header">
+            <h2>Recent Opportunities</h2>
+            <span class="updated" id="updated"></span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Strategy</th>
+                    <th>Event</th>
+                    <th>YES Venue</th>
+                    <th>YES $</th>
+                    <th>NO Venue</th>
+                    <th>NO $</th>
+                    <th>Total</th>
+                    <th>Net Spread</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="opps-body">
+                <tr><td colspan="10" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const API = window.location.origin;
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch(API + '/api/status');
+                const d = await res.json();
+
+                document.getElementById('mode').textContent = d.mode.toUpperCase();
+                document.getElementById('mode').className = 'mode ' + d.mode;
+                document.getElementById('markets').textContent = d.markets_tracked;
+                document.getElementById('total-opps').textContent = d.total_opportunities;
+                document.getElementById('executed').textContent = d.executed;
+                document.getElementById('orphans').textContent = d.open_orphans;
+                document.getElementById('min-spread').textContent = (d.min_spread * 100).toFixed(1) + '%';
+
+                const pnl = document.getElementById('total-pnl');
+                pnl.textContent = '$' + (d.total_pnl >= 0 ? '+' : '') + d.total_pnl.toFixed(2);
+                pnl.className = 'value ' + (d.total_pnl >= 0 ? 'positive' : 'negative');
+
+                const sec = d.uptime_seconds || 0;
+                const hrs = Math.floor(sec / 3600);
+                const mins = Math.floor((sec % 3600) / 60);
+                document.getElementById('uptime').textContent = 'Uptime: ' + hrs + 'h ' + mins + 'm';
+
+                // Venue badges
+                const venueDiv = document.getElementById('venues');
+                venueDiv.innerHTML = ['polymarket', 'jupiter', 'kalshi'].map(v =>
+                    '<span class="venue-badge ' + (d.venues.includes(v) ? 'active' : 'inactive') + '">' + v.toUpperCase() + '</span>'
+                ).join('');
+
+                document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+            } catch(e) {}
+        }
+
+        async function fetchOpportunities() {
+            try {
+                const res = await fetch(API + '/api/opportunities?limit=30');
+                const opps = await res.json();
+                const tbody = document.getElementById('opps-body');
+
+                if (opps.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = opps.map(o => {
+                    const ts = o.timestamp ? o.timestamp.substring(11, 19) : '';
+                    const spread = o.net_spread ? (o.net_spread * 100).toFixed(2) + '%' : '---';
+                    const spreadCls = o.net_spread > 0 ? 'spread-positive' : 'spread-negative';
+                    return '<tr>' +
+                        '<td>' + ts + '</td>' +
+                        '<td><span class="strategy ' + o.strategy + '">' + o.strategy + '</span></td>' +
+                        '<td>' + (o.event_title || '').substring(0, 40) + '</td>' +
+                        '<td>' + (o.yes_venue || '') + '</td>' +
+                        '<td>$' + (o.yes_price || 0).toFixed(3) + '</td>' +
+                        '<td>' + (o.no_venue || '') + '</td>' +
+                        '<td>$' + (o.no_price || 0).toFixed(3) + '</td>' +
+                        '<td>$' + (o.total_cost || 0).toFixed(3) + '</td>' +
+                        '<td class="' + spreadCls + '">' + spread + '</td>' +
+                        '<td>' + (o.status || '') + '</td>' +
+                    '</tr>';
+                }).join('');
+            } catch(e) {}
+        }
+
+        fetchStatus();
+        fetchOpportunities();
+        setInterval(fetchStatus, 3000);
+        setInterval(fetchOpportunities, 5000);
+    </script>
+</body>
+</html>

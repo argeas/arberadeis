@@ -1,0 +1,11 @@
+py-clob-client==0.34.6
+py-builder-relayer-client==0.0.1
+fastapi>=0.115.0
+uvicorn>=0.34.0
+websockets>=14.1
+httpx>=0.28.0
+aiosqlite>=0.20.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.0
+web3>=6.0.0
