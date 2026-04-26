@@ -117,6 +117,39 @@
         </table>
     </div>
 
+    <!-- Settings & Execution Logic Panel -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:20px;">
+        <div class="card" style="padding:16px;">
+            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Active Configuration</h3>
+            <div id="config-panel" style="font-size:12px; font-family:monospace;">Loading...</div>
+        </div>
+        <div class="card" style="padding:16px;">
+            <h3 style="font-size:14px; color:#f59e0b; margin-bottom:12px;">Execution Logic</h3>
+            <div style="font-size:11px; line-height:1.8; color:#999;">
+                <div style="margin-bottom:8px; color:#7dd3fc; font-weight:600;">Scan Phase (every <span id="logic-interval">500</span>ms)</div>
+                <div>1. Poll all active venues for market prices</div>
+                <div>2. For each market: calculate YES_ask + NO_ask</div>
+                <div>3. <b style="color:#4ade80;">Intra-platform:</b> If total &lt; $1.00 on same venue → opportunity</div>
+                <div>4. <b style="color:#d8b4fe;">Cross-venue:</b> Find cheapest YES + cheapest NO across venues</div>
+                <div>5. Deduct fees per venue side → net spread</div>
+                <div>6. If net spread ≥ min threshold → trigger execution</div>
+
+                <div style="margin-top:12px; margin-bottom:8px; color:#f59e0b; font-weight:600;">Execute Phase</div>
+                <div>1. Size position: min(max_size, yes_liquidity, no_liquidity)</div>
+                <div>2. Order legs by venue speed: Jupiter → Polymarket → Kalshi</div>
+                <div>3. <b>Leg 1:</b> Place order on fastest venue</div>
+                <div>4. <b>Leg 2:</b> Immediately place on second venue</div>
+                <div>5. Both fill → log P&L, update portfolio</div>
+                <div>6. Leg 2 fails → <span style="color:#f87171;">ORPHAN</span> → attempt market exit on leg 1</div>
+
+                <div style="margin-top:12px; margin-bottom:8px; color:#f87171; font-weight:600;">Kill Switches</div>
+                <div>• Daily loss ≥ limit → halt all trading</div>
+                <div>• Orphan losses ≥ budget → stop new arbs</div>
+                <div>• &gt;3 open orphans → halt</div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API = window.location.origin;
 
@@ -218,10 +251,68 @@
             fetchStatus();
         }
 
+        async function fetchConfig() {
+            try {
+                const res = await fetch(API + '/api/config');
+                const c = await res.json();
+                const panel = document.getElementById('config-panel');
+                document.getElementById('logic-interval').textContent = c.scan_interval_ms;
+
+                const venueRows = Object.entries(c.venues).map(([v, on]) =>
+                    `<div style="display:flex; justify-content:space-between; padding:2px 0;">` +
+                    `<span style="color:${on ? '#6ee7b7' : '#555'}">${v.toUpperCase()}</span>` +
+                    `<span style="color:${on ? '#6ee7b7' : '#555'}">${on ? '● ON' : '○ OFF'}</span></div>`
+                ).join('');
+
+                const feeRows = Object.entries(c.fees).map(([v, f]) =>
+                    `<div style="display:flex; justify-content:space-between; padding:2px 0;">` +
+                    `<span style="color:#888">${v}</span><span>${(f * 100).toFixed(1)}% per side</span></div>`
+                ).join('');
+
+                panel.innerHTML = `
+                    <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Mode</div>
+                        <div style="font-size:16px; font-weight:700; color:${c.paper_mode ? '#fde047' : '#f87171'}">
+                            ${c.paper_mode ? '📝 PAPER' : '🔴 LIVE'}
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Venues</div>
+                        ${venueRows}
+                    </div>
+
+                    <div style="margin-bottom:10px; padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Risk</div>
+                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                            <span style="color:#888">Max position</span><span>$${c.risk.max_position_size}</span></div>
+                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                            <span style="color:#888">Min net spread</span><span>${(c.risk.min_net_spread * 100).toFixed(1)}%</span></div>
+                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                            <span style="color:#888">Daily loss limit</span><span>$${c.risk.daily_loss_limit}</span></div>
+                        <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                            <span style="color:#888">Orphan budget</span><span>$${c.risk.orphan_daily_budget}/day</span></div>
+                    </div>
+
+                    <div style="padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Fees</div>
+                        ${feeRows}
+                    </div>
+
+                    <div style="margin-top:10px; padding:8px; background:#0e0e16; border-radius:6px;">
+                        <div style="color:#666; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Scan interval</div>
+                        <div>${c.scan_interval_ms}ms</div>
+                    </div>
+                `;
+            } catch(e) {}
+        }
+
         fetchStatus();
         fetchOpportunities();
+        fetchConfig();
         setInterval(fetchStatus, 3000);
         setInterval(fetchOpportunities, 5000);
+        setInterval(fetchConfig, 15000);
     </script>
 </body>
 </html>
