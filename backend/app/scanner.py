@@ -19,6 +19,11 @@ _market_pairs: dict[str, MarketPair] = {}
 _last_full_scan: float = 0
 FULL_SCAN_INTERVAL = 60  # Re-discover markets every 60 seconds
 
+# Deduplication: track recently detected opportunities by market key
+_recent_opps: dict[str, float] = {}  # key → timestamp of last detection
+DEDUP_COOLDOWN = 300  # Don't re-detect same market within 5 minutes
+MIN_VOLUME = 5000  # Minimum market volume USD to consider ($5K+)
+
 
 async def discover_polymarket_markets():
     """Fetch all active Polymarket markets and build MarketPair entries."""
@@ -194,11 +199,49 @@ def _titles_match(title_a: str, title_b: str) -> bool:
     return False
 
 
+def _dedup_key(pair_key: str, strategy: str, yes_venue: str, no_venue: str) -> str:
+    return f"{pair_key}|{strategy}|{yes_venue}|{no_venue}"
+
+
+def _is_duplicate(dedup_key: str) -> bool:
+    """Check if this opportunity was recently detected. If not, mark it."""
+    now = time.time()
+    # Clean old entries
+    expired = [k for k, t in _recent_opps.items() if now - t > DEDUP_COOLDOWN]
+    for k in expired:
+        del _recent_opps[k]
+
+    if dedup_key in _recent_opps:
+        return True
+    _recent_opps[dedup_key] = now
+    return False
+
+
+def _build_opportunity(pair, strategy, yes_venue, no_venue, yes_side, no_side,
+                       total, gross_spread, net_spread) -> Opportunity:
+    return Opportunity(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        strategy=strategy,
+        event_title=pair.event_title,
+        poly_condition_id=pair.poly_condition_id,
+        jup_market_id=pair.jup_market_id,
+        yes_venue=yes_venue,
+        no_venue=no_venue,
+        yes_price=yes_side.best_ask if yes_side else 0,
+        no_price=no_side.best_ask if no_side else 0,
+        total_cost=total,
+        gross_spread=gross_spread,
+        net_spread=net_spread,
+        yes_liquidity=yes_side.depth if yes_side else 0,
+        no_liquidity=no_side.depth if no_side else 0,
+    )
+
+
 async def scan_for_opportunities() -> list[Opportunity]:
-    """Scan all market pairs for arbitrage opportunities."""
+    """Scan all market pairs for arbitrage opportunities.
+    Includes deduplication and liquidity filtering."""
     global _last_full_scan
 
-    # Periodic full market discovery
     now = time.time()
     if now - _last_full_scan > FULL_SCAN_INTERVAL:
         _last_full_scan = now
@@ -213,28 +256,17 @@ async def scan_for_opportunities() -> list[Opportunity]:
         for venue in config.active_venues:
             total = pair.get_intra_spread(venue)
             if total is not None and total < 1.0:
-                fee = _get_venue_fee(venue) * 2  # Both sides
+                fee = _get_venue_fee(venue) * 2
                 gross_spread = 1.0 - total
                 net_spread = gross_spread - fee
                 if net_spread >= config.min_net_spread:
+                    dk = _dedup_key(key, "intra", venue, venue)
+                    if _is_duplicate(dk):
+                        continue
                     yes_side = pair.sides.get((venue, "YES"))
                     no_side = pair.sides.get((venue, "NO"))
-                    opp = Opportunity(
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        strategy="intra",
-                        event_title=pair.event_title,
-                        poly_condition_id=pair.poly_condition_id,
-                        jup_market_id=pair.jup_market_id,
-                        yes_venue=venue,
-                        no_venue=venue,
-                        yes_price=yes_side.best_ask if yes_side else 0,
-                        no_price=no_side.best_ask if no_side else 0,
-                        total_cost=total,
-                        gross_spread=gross_spread,
-                        net_spread=net_spread,
-                        yes_liquidity=yes_side.depth if yes_side else 0,
-                        no_liquidity=no_side.depth if no_side else 0,
-                    )
+                    opp = _build_opportunity(pair, "intra", venue, venue,
+                                             yes_side, no_side, total, gross_spread, net_spread)
                     opportunities.append(opp)
 
         # Strategy 2+: Cross-venue arbitrage
@@ -242,31 +274,20 @@ async def scan_for_opportunities() -> list[Opportunity]:
             result = pair.get_best_cross_spread()
             if result:
                 total, yes_venue, no_venue = result
-                if yes_venue != no_venue:  # Only cross-venue, not same venue
+                if yes_venue != no_venue:
                     yes_fee = _get_venue_fee(yes_venue)
                     no_fee = _get_venue_fee(no_venue)
                     gross_spread = 1.0 - total
                     net_spread = gross_spread - yes_fee - no_fee
                     if net_spread >= config.min_net_spread:
+                        dk = _dedup_key(key, "cross", yes_venue, no_venue)
+                        if _is_duplicate(dk):
+                            continue
                         yes_side = pair.sides.get((yes_venue, "YES"))
                         no_side = pair.sides.get((no_venue, "NO"))
                         strategy = "cross_chain" if {yes_venue, no_venue} == {"polymarket", "jupiter"} else "cross_platform"
-                        opp = Opportunity(
-                            timestamp=datetime.now(timezone.utc).isoformat(),
-                            strategy=strategy,
-                            event_title=pair.event_title,
-                            poly_condition_id=pair.poly_condition_id,
-                            jup_market_id=pair.jup_market_id,
-                            yes_venue=yes_venue,
-                            no_venue=no_venue,
-                            yes_price=yes_side.best_ask if yes_side else 0,
-                            no_price=no_side.best_ask if no_side else 0,
-                            total_cost=total,
-                            gross_spread=gross_spread,
-                            net_spread=net_spread,
-                            yes_liquidity=yes_side.depth if yes_side else 0,
-                            no_liquidity=no_side.depth if no_side else 0,
-                        )
+                        opp = _build_opportunity(pair, strategy, yes_venue, no_venue,
+                                                 yes_side, no_side, total, gross_spread, net_spread)
                         opportunities.append(opp)
 
     return opportunities

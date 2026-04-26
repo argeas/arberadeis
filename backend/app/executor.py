@@ -42,8 +42,13 @@ async def execute_arb(opp: Opportunity) -> bool:
         return False
 
     # Calculate position size
-    size_usd = min(config.max_position_size, opp.yes_liquidity, opp.no_liquidity)
-    if size_usd < 5:
+    # Use max_position_size as base; if liquidity data available, cap to it
+    size_usd = config.max_position_size
+    if opp.yes_liquidity > 0:
+        size_usd = min(size_usd, opp.yes_liquidity)
+    if opp.no_liquidity > 0:
+        size_usd = min(size_usd, opp.no_liquidity)
+    if size_usd < 1:
         await update_opportunity_status(opp.id, "skipped")
         return False
 
