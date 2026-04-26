@@ -1,147 +1,226 @@
-# ArberAdeis — Polymarket Arbitrage Bot
+# ArberAdeis — Multi-Venue Prediction Market Arbitrage Bot
 
 ## Overview
 
-Automated arbitrage bot that detects and exploits pricing inefficiencies across Polymarket markets. Two strategies:
+Automated arbitrage bot that detects and exploits pricing inefficiencies across **three prediction market venues**. The bot never predicts outcomes — it locks in mathematically guaranteed profit when the combined cost of covering all outcomes across venues is less than the payout.
 
-1. **Intra-platform arbitrage** — When YES + NO on the same Polymarket market costs < $1.00
-2. **Cross-platform arbitrage** — When Polymarket + Kalshi price the same event differently
+### Venues
+1. **Polymarket** — Polygon PoS, CLOB orderbook, largest liquidity
+2. **Jupiter Prediction** — Solana, mirrors Polymarket markets, Jito bundles possible
+3. **Kalshi** — Centralized exchange, REST API, US-regulated
 
-The bot never predicts outcomes. It locks in mathematically guaranteed profit when the combined cost of covering all outcomes is less than the payout.
+### Strategies
+1. **Intra-platform** — YES + NO on same venue costs < $1.00
+2. **Cross-chain (Polymarket ↔ Jupiter)** — Same market, different prices on Polygon vs Solana
+3. **Cross-platform (any venue ↔ Kalshi)** — Different platforms, same event
+4. **Three-way** — Find cheapest YES and cheapest NO across all three venues
+5. **Long-tail scanning** — Niche markets with 4-6% spreads sitting idle
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    ArberAdeis                         │
-├──────────┬───────────┬───────────┬───────────────────┤
-│ Scanner  │ Evaluator │ Executor  │ Dashboard         │
-│          │           │           │                   │
-│ Polls    │ Scores    │ Places    │ FastAPI +         │
-│ markets  │ spreads   │ orders    │ Next.js UI        │
-│ every    │ checks    │ atomically│                   │
-│ 250ms    │ fees/     │ on both   │ Real-time P&L,    │
-│          │ slippage  │ legs      │ open positions,   │
-│ Gamma    │           │           │ opportunity feed  │
-│ API +    │ Kelly     │ CLOB API  │                   │
-│ CLOB API │ sizing    │ + Kalshi  │ WebSocket live    │
-│          │           │ API       │ updates           │
-└──────────┴───────────┴───────────┴───────────────────┘
-         │                  │                │
-         ▼                  ▼                ▼
-    ┌─────────┐      ┌──────────┐     ┌──────────┐
-    │ Polygon │      │ Kalshi   │     │ SQLite   │
-    │ (CLOB)  │      │ REST API │     │ + Telegram│
-    └─────────┘      └──────────┘     └──────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        ArberAdeis                              │
+├───────────┬────────────┬────────────┬─────────────────────────┤
+│ Scanners  │ Evaluator  │ Executor   │ Dashboard               │
+│           │            │            │                         │
+│ Polymarket│ Calculate  │ Dual-leg   │ FastAPI + Next.js       │
+│ Jupiter   │ net spread │ execution  │ Real-time opportunity   │
+│ Kalshi    │ after fees │ with       │ feed, P&L, positions    │
+│           │            │ rollback   │                         │
+│ 250ms     │ Kelly      │            │ WebSocket live updates  │
+│ polling   │ sizing     │ Jito for   │                         │
+│           │            │ Solana leg │                         │
+└───────────┴────────────┴────────────┴─────────────────────────┘
+      │            │            │                │
+      ▼            ▼            ▼                ▼
+ ┌─────────┐ ┌─────────┐ ┌──────────┐    ┌──────────┐
+ │Polymarket│ │Jupiter  │ │ Kalshi   │    │ SQLite   │
+ │ Polygon  │ │ Solana  │ │ REST API │    │+Telegram │
+ │ CLOB API │ │Pred API │ │          │    │          │
+ └─────────┘ └─────────┘ └──────────┘    └──────────┘
 ```
 
 ---
 
-## Strategy 1: Intra-Polymarket Arbitrage
+## Venue Details
+
+### Polymarket (Polygon)
+- **Chain:** Polygon PoS (Chain ID 137)
+- **Settlement:** ~2 seconds, <$0.01 gas
+- **API:** CLOB REST + Gamma API for market discovery
+- **Auth:** Private key → derived API creds + Builder keys
+- **Order types:** GTC, GTD, FOK
+- **Fees:** ~1% per side
+- **Existing code:** Full implementation in polybot (`py-clob-client`)
+
+### Jupiter Prediction (Solana)
+- **Chain:** Solana (~400ms finality)
+- **API:** `https://prediction-market-api.jup.ag/api/v1/`
+- **Key endpoints:**
+  - `GET /events` — list active events
+  - `GET /events/degen` — live crypto events (5m, 15m — same as Polymarket!)
+  - `GET /events/degen/{symbol}` — current live degen event for BTC, ETH, SOL
+  - `GET /orderbook/{marketId}` — orderbook data
+  - `POST /orders` — create order transaction
+  - `GET /positions` — list open positions
+  - `POST /positions/{id}/claim` — claim winning positions
+  - `POST /execute` — submit signed transactions
+- **Auth:** Solana wallet keypair
+- **Min trade:** $5 (raised April 14, 2026)
+- **Jito bundles:** YES — Solana-native, can bundle order execution
+- **Market matching:** Direct — Jupiter mirrors Polymarket markets by event ID
+
+### Kalshi (Centralized)
+- **API:** REST API with API key auth
+- **Settlement:** Instant (centralized)
+- **Auth:** API key from Kalshi dashboard
+- **Fees:** Variable, typically 1-3%
+- **Market matching:** Fuzzy text matching needed (different event naming)
+
+---
+
+## Strategy 1: Intra-Platform Arbitrage
 
 ### How it works
-Every Polymarket binary market has YES and NO tokens. At resolution, one pays $1.00 and the other pays $0.00. If you can buy YES at $0.55 and NO at $0.42 (total $0.97), you're guaranteed $1.00 back — a 3.1% risk-free return.
-
-### Where the edge comes from
-- **Stale orders** — Limit orders sitting on the book that haven't been updated
-- **Multi-outcome markets** — Markets with 3+ outcomes where the sum of all YES prices < $1.00
-- **Market maker spread** — When bid-ask spreads create momentary mispricings
-- **Resolution approaching** — Rapid price movement near resolution leaves orphaned orders
+Every binary market has YES and NO. At resolution, one pays $1.00. If YES_ask + NO_ask < $1.00 on the same venue, buy both.
 
 ### Detection
 ```python
 for market in all_active_markets:
-    yes_ask = get_best_ask(market.yes_token_id)
-    no_ask = get_best_ask(market.no_token_id)
-    total_cost = yes_ask + no_ask
-    if total_cost < 1.00:
-        spread = 1.00 - total_cost
-        if spread > MIN_SPREAD + FEES:
-            execute_arb(market, yes_ask, no_ask)
+    yes_ask = get_best_ask(market.yes_token)
+    no_ask = get_best_ask(market.no_token)
+    total = yes_ask + no_ask
+    if total < 1.00 - FEES:
+        execute(market, yes_ask, no_ask)
 ```
 
 ### Execution
-- Buy YES at ask + buy NO at ask in same Polygon block if possible
-- Use CTF Exchange for atomic settlement
-- Net cost < $1.00, guaranteed payout = $1.00
+- **Polymarket:** Buy YES + NO via CLOB in rapid succession (same Polygon block if possible)
+- **Jupiter:** Bundle both orders in a Jito bundle → truly atomic on Solana
 
 ---
 
-## Strategy 2: Cross-Platform Arbitrage (Polymarket ↔ Kalshi)
+## Strategy 2: Cross-Chain Arbitrage (Polymarket ↔ Jupiter)
 
-### How it works
-Same event priced differently on two platforms:
-- Polymarket: "Fed cuts rates" YES = $0.61
-- Kalshi: "Fed cuts rates" NO = $0.35
-- Total cost: $0.61 + $0.35 = $0.96
-- Guaranteed payout: $1.00
-- Profit: $0.04 (4.2%)
+### Why this is the best opportunity
+Jupiter mirrors Polymarket markets on Solana. Same events, same resolutions. But:
+- **Different orderbooks** → different prices
+- **Different chains** → price lag between them
+- **Jupiter is newer** → less bot competition, wider spreads
+- **Degen markets** → Jupiter has 5m/15m crypto events (same as our polybot markets!)
+
+### Example
+```
+Polymarket (Polygon): BTC 5m Up YES = $0.62
+Jupiter (Solana):     BTC 5m Up NO  = $0.34
+Total: $0.96 → Payout: $1.00 → Profit: $0.04 (4.2%)
+```
+
+### Execution
+1. **Detect:** Scanner finds price divergence between Poly and Jupiter for same event
+2. **Evaluate:** Calculate net spread after fees on both platforms
+3. **Execute leg 1 (Jupiter/Solana):** Place order via Jito bundle (atomic, ~400ms)
+4. **Execute leg 2 (Polymarket/Polygon):** Place FOK order via CLOB (~2s)
+5. **Monitor:** Track both fills, handle orphans if leg 2 fails
 
 ### Market Matching
-The hardest part — finding equivalent markets across platforms:
-- Text similarity matching (fuzzy match event titles)
-- Curated mapping table for known recurring markets
-- Resolution source matching (same oracle = same outcome)
+Jupiter mirrors Polymarket events directly — matching is trivial:
+- `GET /events/degen/BTC` on Jupiter = `btc-updown-5m` on Polymarket
+- Same resolution oracle, same outcomes
+- No fuzzy matching needed for degen/crypto markets
 
-### Execution Risk (NO ATOMIC CROSS-PLATFORM)
-- Polymarket runs on Polygon; Kalshi is centralized REST API
-- **Jito bundles do NOT work here** (Jito = Solana only, Polymarket = Polygon)
-- Two separate API calls, ~100-500ms apart
-- Leg risk: one side fills, other doesn't
-- Mitigation: speed (parallel execution), small sizes, wide spreads only
+---
+
+## Strategy 3: Cross-Platform (↔ Kalshi)
 
 ### Detection
 ```python
 for poly_market in polymarket_markets:
-    kalshi_match = find_matching_kalshi_market(poly_market)
+    kalshi_match = fuzzy_match(poly_market, kalshi_markets)
     if kalshi_match:
-        poly_yes = get_best_ask(poly_market.yes_token)
-        kalshi_no = get_kalshi_ask(kalshi_match, "NO")
-        total = poly_yes + kalshi_no
-        if total < 1.00 - FEES:
-            execute_cross_arb(poly_market, kalshi_match)
+        poly_yes = get_poly_ask(market.yes_token)
+        kalshi_no = get_kalshi_ask(match, "NO")
+        if poly_yes + kalshi_no < 1.00 - FEES:
+            execute_cross(poly_market, kalshi_match)
+```
+
+### Market Matching (Kalshi only)
+- Fuzzy text similarity on event titles
+- Curated mapping table for recurring markets (elections, Fed meetings)
+- Resolution source matching as verification
+
+---
+
+## Strategy 4: Three-Way Arbitrage
+
+### Find cheapest YES and cheapest NO across all three venues
+```python
+for event in matched_events:
+    yes_prices = {
+        "poly": get_poly_ask(event, "YES"),
+        "jup": get_jup_ask(event, "YES"),
+        "kalshi": get_kalshi_ask(event, "YES"),
+    }
+    no_prices = {
+        "poly": get_poly_ask(event, "NO"),
+        "jup": get_jup_ask(event, "NO"),
+        "kalshi": get_kalshi_ask(event, "NO"),
+    }
+    cheapest_yes = min(yes_prices, key=yes_prices.get)
+    cheapest_no = min(no_prices, key=no_prices.get)
+    total = yes_prices[cheapest_yes] + no_prices[cheapest_no]
+    if total < 1.00 - TOTAL_FEES:
+        execute(cheapest_yes_venue, cheapest_no_venue)
 ```
 
 ---
 
-## Strategy 3: Long-Tail Market Scanning
+## Strategy 5: Long-Tail Scanning
 
-### The 95% opportunity
-Top markets (elections, BTC price) are arbitraged by HFT in seconds. But:
-- Regional politics, mid-tier sports, niche macro
-- 4-6% spreads sitting idle for 15-30 seconds
-- Lower liquidity but also lower competition
-- 60-70% of fills come from these markets
-
-### Implementation
-- Scan ALL active markets, not just popular ones
-- Sort by spread size × liquidity
-- Prioritize markets with $50K+ volume (fillable) but low bot activity
-- Skip markets < $5K volume (manipulation risk)
+- Top 5% of markets are arbitraged by HFT in seconds
+- Remaining 95% (regional politics, mid-tier sports, niche macro) has 4-6% spreads idle for 15-30s
+- Scan ALL active markets across all venues, not just popular ones
+- Sort by: spread × liquidity
+- Min liquidity: $5K (avoid manipulation)
+- 60-70% of fills expected from long-tail
 
 ---
 
 ## Risk Management
 
-### Per-Trade Limits
+### Per-Trade
 - Max position: 8% of portfolio
-- Min spread after fees: 1.5% (Polymarket ~1% fee per side)
+- Min net spread: 1.5% (after all fees)
 - Max single market exposure: $500
-- Slippage protection: cancel if spread < 0.5% after fees
+- Slippage protection: cancel if spread < 0.5% after order submission
 
 ### Kill Switches
 - Daily loss limit: -5% → halt all trading
 - Total drawdown: -15% → kill switch
-- Orphan position limit: if >3 unhedged positions, halt
+- Orphan position limit: >3 unhedged → halt
 - Telegram alert on every threshold
 
-### Leg Risk Management
-- Maximum time between leg 1 and leg 2: 2 seconds
-- If leg 2 fails: immediately try to exit leg 1 at market
-- Track orphan positions separately
+### Leg Risk (Cross-Chain)
+- Max time between leg 1 and leg 2: 3 seconds
+- If leg 2 fails: immediately market-exit leg 1
+- Track orphans separately with dedicated P&L
 - Orphan loss budget: max $50/day
+- Prefer Jupiter first (faster finality) then Polymarket
+
+### Fee Budget
+| Venue | Fee per side | Round-trip |
+|-------|-------------|------------|
+| Polymarket | ~1% | ~2% |
+| Jupiter | ~0.5-1% | ~1-2% |
+| Kalshi | ~1-3% | ~2-6% |
+
+**Min gross spread to be profitable:**
+- Intra-platform: >2% (one venue's fees × 2 sides)
+- Poly ↔ Jupiter: >3% (both venues' fees)
+- Any ↔ Kalshi: >4% (Kalshi fees are higher)
 
 ---
 
@@ -150,41 +229,56 @@ Top markets (elections, BTC price) are arbitraged by HFT in seconds. But:
 ### Reuse from Polybot
 | Component | Source | Status |
 |-----------|--------|--------|
-| CLOB client init | `polybot/backend/app/polymarket.py` | Direct reuse |
-| Order placement | `polybot/backend/app/polymarket.py` | Direct reuse |
-| Market discovery (Gamma API) | `polybot/backend/app/polymarket.py` | Adapt for all markets |
-| Trade database | `polybot/backend/app/database.py` | Adapt schema |
-| Telegram notifications | `polybot/backend/app/telegram.py` | Direct reuse |
-| WebSocket manager | `polybot/backend/app/ws_manager.py` | Direct reuse |
-| FastAPI dashboard | `polybot/backend/app/main.py` | Adapt endpoints |
+| CLOB client init | `polybot/polymarket.py` | Direct reuse |
+| Order placement | `polybot/polymarket.py` | Direct reuse |
+| Market discovery (Gamma) | `polybot/polymarket.py` | Adapt for all markets |
+| Trade database | `polybot/database.py` | Adapt schema |
+| Telegram notifications | `polybot/telegram.py` | Direct reuse |
+| WebSocket manager | `polybot/ws_manager.py` | Direct reuse |
+| FastAPI dashboard | `polybot/main.py` | Adapt endpoints |
 | Frontend UI | `polybot/frontend/` | Fork and modify |
-| Config/auth | `polybot/backend/app/config.py` | Direct reuse |
+| Config/auth | `polybot/config.py` | Extend for 3 venues |
+| Wallet credentials | `polybot/.env` | Add Solana + Kalshi keys |
 
-### New Components Needed
+### New Components
 | Component | Purpose |
 |-----------|---------|
-| Market scanner | Poll ALL Polymarket markets for spread opportunities |
-| Kalshi API client | REST client for Kalshi order placement |
-| Market matcher | Fuzzy text matching for cross-platform event pairing |
-| Spread evaluator | Calculate net spread after fees, slippage |
-| Dual-leg executor | Parallel order placement with rollback |
-| Orphan tracker | Monitor and manage single-leg positions |
-| Opportunity feed | Real-time stream of detected opportunities |
+| `jupiter_api.py` | Jupiter Prediction REST client + Solana transaction signing |
+| `kalshi_api.py` | Kalshi REST client |
+| `scanner.py` | Multi-venue market scanner (polls all 3 every 250ms) |
+| `evaluator.py` | Cross-venue spread calculation, fee deduction, sizing |
+| `executor.py` | Dual-leg execution with Jito bundles for Solana |
+| `matcher.py` | Event matching across venues (direct for Jupiter, fuzzy for Kalshi) |
+| `risk.py` | Kill switches, position limits, orphan budget |
+| `orphan_manager.py` | Track and exit single-leg positions |
 
 ### Dependencies
 ```
-py-clob-client==0.34.6        # Polymarket CLOB
+# Polymarket (existing)
+py-clob-client==0.34.6
 py-builder-relayer-client==0.0.1
-fastapi>=0.115.0               # Dashboard backend
+web3>=6.0.0
+
+# Jupiter / Solana
+solana>=0.34.0              # Solana Python SDK
+solders>=0.21.0             # Solana transaction building
+anchorpy>=0.20.0            # Anchor program interaction
+jito-sdk>=0.1.0             # Jito bundle submission (if available)
+httpx>=0.28.0               # Jupiter REST API calls
+
+# Kalshi
+httpx>=0.28.0               # Kalshi REST API
+
+# Infrastructure
+fastapi>=0.115.0
 uvicorn>=0.34.0
 websockets>=14.1
-httpx>=0.28.0                  # Async HTTP (Kalshi API)
-aiosqlite>=0.20.0              # Trade logging
+aiosqlite>=0.20.0
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
-web3>=6.0.0                    # Polygon on-chain
-rich>=13.0.0                   # Terminal dashboard
-thefuzz>=0.22.0                # Fuzzy string matching (market matcher)
+python-dotenv>=1.0.0
+rich>=13.0.0
+thefuzz>=0.22.0             # Fuzzy matching for Kalshi
 ```
 
 ---
@@ -192,54 +286,76 @@ thefuzz>=0.22.0                # Fuzzy string matching (market matcher)
 ## Database Schema
 
 ```sql
--- Detected opportunities (whether traded or not)
+-- Detected opportunities
 CREATE TABLE opportunities (
     id INTEGER PRIMARY KEY,
     timestamp TEXT,
-    strategy TEXT,          -- "intra" or "cross"
-    market_slug TEXT,
+    strategy TEXT,              -- "intra", "cross_chain", "cross_platform", "three_way"
+    event_title TEXT,
     poly_condition_id TEXT,
-    kalshi_market_id TEXT,  -- NULL for intra
+    jup_market_id TEXT,
+    kalshi_market_id TEXT,
+    yes_venue TEXT,             -- "polymarket", "jupiter", "kalshi"
+    no_venue TEXT,
     yes_price REAL,
     no_price REAL,
     total_cost REAL,
-    gross_spread REAL,      -- 1.00 - total_cost
-    net_spread REAL,        -- after fees
-    liquidity REAL,         -- min depth of both sides
-    status TEXT,            -- "detected", "executed", "skipped", "failed"
-    skip_reason TEXT
+    gross_spread REAL,
+    net_spread REAL,
+    yes_liquidity REAL,
+    no_liquidity REAL,
+    status TEXT,                -- "detected", "executed", "skipped", "failed"
+    skip_reason TEXT,
+    execution_time_ms INTEGER
 );
 
--- Executed arbitrage trades (two legs per arb)
-CREATE TABLE arb_trades (
+-- Executed legs
+CREATE TABLE arb_legs (
     id INTEGER PRIMARY KEY,
     opportunity_id INTEGER,
     timestamp TEXT,
-    leg INTEGER,            -- 1 or 2
-    platform TEXT,          -- "polymarket" or "kalshi"
-    side TEXT,              -- "YES" or "NO"
+    leg INTEGER,                -- 1 or 2
+    venue TEXT,                 -- "polymarket", "jupiter", "kalshi"
+    chain TEXT,                 -- "polygon", "solana", "centralized"
+    side TEXT,                  -- "YES" or "NO"
     token_id TEXT,
     price REAL,
     size REAL,
     order_id TEXT,
-    status TEXT,            -- "filled", "failed", "orphan"
+    tx_hash TEXT,
+    status TEXT,                -- "filled", "failed", "orphan"
     fill_price REAL,
-    pnl REAL
+    fees REAL,
+    pnl REAL,
+    jito_bundle_id TEXT         -- NULL if not Solana
 );
 
--- Orphan positions (single-leg fills)
+-- Orphan positions
 CREATE TABLE orphans (
     id INTEGER PRIMARY KEY,
-    arb_trade_id INTEGER,
+    leg_id INTEGER,
     timestamp TEXT,
-    platform TEXT,
+    venue TEXT,
     side TEXT,
     size REAL,
     entry_price REAL,
     exit_price REAL,
     exit_timestamp TEXT,
     pnl REAL,
-    status TEXT              -- "open", "exited", "resolved"
+    status TEXT                  -- "open", "exited", "resolved"
+);
+
+-- Portfolio snapshots
+CREATE TABLE portfolio (
+    id INTEGER PRIMARY KEY,
+    timestamp TEXT,
+    poly_balance REAL,
+    jup_balance REAL,
+    kalshi_balance REAL,
+    total_value REAL,
+    daily_pnl REAL,
+    open_positions INTEGER,
+    orphan_count INTEGER
 );
 ```
 
@@ -253,22 +369,24 @@ arberadeis/
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py              # FastAPI + background tasks
-│   │   ├── config.py            # Settings (from polybot)
-│   │   ├── scanner.py           # Market scanner (all Polymarket markets)
-│   │   ├── evaluator.py         # Spread calculation, fee deduction
-│   │   ├── executor.py          # Dual-leg order execution
-│   │   ├── matcher.py           # Cross-platform market matching
-│   │   ├── polymarket_api.py    # CLOB client (from polybot)
+│   │   ├── config.py            # Multi-venue settings
+│   │   ├── scanner.py           # Multi-venue market poller
+│   │   ├── evaluator.py         # Spread calc, fee deduction, sizing
+│   │   ├── executor.py          # Dual-leg execution engine
+│   │   ├── matcher.py           # Cross-venue event matching
+│   │   ├── polymarket_api.py    # Polygon CLOB client (from polybot)
+│   │   ├── jupiter_api.py       # Solana Jupiter Prediction client
 │   │   ├── kalshi_api.py        # Kalshi REST client
-│   │   ├── database.py          # SQLite (adapted from polybot)
+│   │   ├── jito.py              # Jito bundle submission for Solana
+│   │   ├── database.py          # SQLite (adapted)
 │   │   ├── models.py            # Data models
 │   │   ├── telegram.py          # Notifications (from polybot)
 │   │   ├── ws_manager.py        # WebSocket (from polybot)
-│   │   ├── risk.py              # Kill switches, position limits
-│   │   └── orphan_manager.py    # Handle single-leg positions
+│   │   ├── risk.py              # Kill switches, limits
+│   │   └── orphan_manager.py    # Single-leg position handling
 │   ├── Dockerfile
 │   └── requirements.txt
-├── frontend/                     # Fork from polybot, adapt UI
+├── frontend/                     # Fork from polybot
 │   └── ...
 ├── docker-compose.yml
 ├── Makefile
@@ -281,59 +399,108 @@ arberadeis/
 
 ---
 
-## Implementation Phases
+## Environment Variables
 
-### Phase 1: Intra-Polymarket Scanner (Week 1)
-- Scan ALL active markets via Gamma API
-- Calculate YES + NO ask for each
-- Detect spreads > 1.5% after fees
-- Log opportunities to SQLite
-- Paper trade mode (log but don't execute)
-- Telegram alerts on opportunities
+```env
+# Polymarket (Polygon)
+POLY_API_KEY=
+POLY_API_SECRET=
+POLY_API_PASSPHRASE=
+POLY_PRIVATE_KEY=
+POLY_WALLET_ADDRESS=
+POLY_PROXY_ADDRESS=
+BUILDER_API_KEY=
+BUILDER_API_SECRET=
+BUILDER_API_PASSPHRASE=
 
-### Phase 2: Execution Engine (Week 2)
-- Place both legs via CLOB API
-- Atomic execution on Polygon where possible
-- Orphan detection and exit logic
-- Risk limits (position size, daily loss)
-- Dashboard with opportunity feed
+# Jupiter (Solana)
+SOLANA_PRIVATE_KEY=            # Base58 or byte array
+SOLANA_RPC_URL=                # Helius/QuickNode for speed
+JITO_BLOCK_ENGINE_URL=         # For bundle submission
 
-### Phase 3: Cross-Platform (Week 3-4)
-- Kalshi API integration
-- Market matching (fuzzy text + curated list)
-- Parallel dual-leg execution
-- Leg risk management
-- Extended dashboard
+# Kalshi
+KALSHI_API_KEY=
+KALSHI_API_SECRET=
 
-### Phase 4: Optimization (Ongoing)
-- Speed optimization (sub-100ms detection → execution)
-- Multi-outcome market support
-- Historical spread analysis
-- Kelly sizing based on observed fill rates
+# Telegram
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# Risk
+MAX_POSITION_PCT=0.08
+DAILY_LOSS_LIMIT_PCT=0.05
+TOTAL_DRAWDOWN_KILL_PCT=0.15
+MIN_NET_SPREAD=0.015
+ORPHAN_DAILY_BUDGET=50
+```
 
 ---
 
-## Key Metrics to Track
+## Implementation Phases
 
-- Opportunities detected / hour
+### Phase 1: Intra-Polymarket Scanner (Week 1)
+- Scan ALL active Polymarket markets via Gamma API
+- Calculate YES + NO ask for each
+- Detect spreads > 1.5% after fees
+- Log opportunities to SQLite
+- Paper trade mode
+- Telegram alerts on opportunities
+- Basic dashboard showing opportunity feed
+
+### Phase 2: Jupiter Integration (Week 2)
+- Jupiter Prediction API client
+- Fetch degen/crypto events (5m, 15m — same as polybot!)
+- Match Jupiter events to Polymarket events
+- Detect cross-chain spreads
+- Paper trade cross-chain opportunities
+
+### Phase 3: Execution Engine (Week 3)
+- Polymarket leg: FOK orders via CLOB
+- Jupiter leg: Signed transactions via API
+- Jito bundle submission for Solana leg (atomic)
+- Orphan detection and auto-exit
+- Risk limits enforcement
+- Full dashboard with positions, P&L
+
+### Phase 4: Kalshi + Three-Way (Week 4)
+- Kalshi API client
+- Fuzzy market matching
+- Three-way spread detection
+- Extended executor for 3 venues
+
+### Phase 5: Optimization (Ongoing)
+- Sub-100ms detection → execution latency
+- Multi-outcome market support
+- Historical spread analysis for timing
+- Adaptive fee estimation
+- Long-tail market prioritization
+
+---
+
+## Key Metrics
+
+- Opportunities detected / hour (per strategy)
 - Opportunities executed / hour
 - Fill rate (both legs successful)
-- Orphan rate
-- Average spread captured
-- Daily P&L
-- Largest orphan loss
-- Time from detection to execution (latency)
+- Orphan rate and orphan P&L
+- Average net spread captured
+- Daily / weekly / monthly P&L
+- Latency: detection → execution (ms)
+- Venue-specific fill rates
+- Jito bundle success rate (Solana)
 
 ---
 
 ## Important Notes
 
-1. **Jito bundles do NOT work for Polymarket** — Polymarket is on Polygon, not Solana. Atomic cross-platform execution is impossible. The post you referenced was incorrect about this.
+1. **Jito bundles work for Jupiter leg only** — Solana-native. Polymarket (Polygon) and Kalshi (centralized) cannot use Jito. Cross-chain is never truly atomic.
 
-2. **Fees matter** — Polymarket charges ~1% per side. A 3% gross spread becomes ~1% net. Only trade when net spread > 1.5%.
+2. **Jupiter mirrors Polymarket** — Same events, same resolutions. The degen/crypto markets (5m, 15m) are identical to polybot's markets. Market matching is trivial for these.
 
-3. **Liquidity is king** — A 10% spread with $50 liquidity is useless. Prioritize spread × liquidity.
+3. **Fees eat the spread** — Polymarket ~1%/side, Jupiter ~0.5-1%/side, Kalshi ~1-3%/side. A 3% gross spread can become <1% net. Only trade when math works.
 
-4. **Speed is the moat** — Other bots are scanning too. The first to detect and execute wins. Sub-second scanning is essential.
+4. **Speed is the moat** — Other bots are scanning too. Sub-second scanning across all three venues is essential. First to detect and execute wins.
 
-5. **Start with intra-platform** — Safer, simpler, no leg risk. Cross-platform adds complexity and risk.
+5. **Start with intra-platform** — Safest (no leg risk). Then cross-chain Poly↔Jupiter (best opportunity, direct market matching). Kalshi last (fuzzy matching adds complexity).
+
+6. **Long-tail is where the money is** — Top markets are fought over by HFT. Niche markets have wider spreads and less competition.
