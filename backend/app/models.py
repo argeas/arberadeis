@@ -99,6 +99,8 @@ class Opportunity:
     net_spread: float = 0.0
     yes_liquidity: float = 0.0
     no_liquidity: float = 0.0
+    yes_token_id: str = ""
+    no_token_id: str = ""
     status: str = "detected"
     skip_reason: str | None = None
     execution_time_ms: int | None = None

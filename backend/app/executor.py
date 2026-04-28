@@ -148,8 +148,8 @@ async def execute_arb(opp: Opportunity) -> bool:
 
 def _order_legs(opp: Opportunity) -> list[dict]:
     """Order legs for execution — faster venue first."""
-    yes_side = {"venue": opp.yes_venue, "side": "YES", "price": opp.yes_price, "token_id": ""}
-    no_side = {"venue": opp.no_venue, "side": "NO", "price": opp.no_price, "token_id": ""}
+    yes_side = {"venue": opp.yes_venue, "side": "YES", "price": opp.yes_price, "token_id": opp.yes_token_id}
+    no_side = {"venue": opp.no_venue, "side": "NO", "price": opp.no_price, "token_id": opp.no_token_id}
 
     venue_speed = {"jupiter": 1, "polymarket": 2, "kalshi": 3}
     legs = [yes_side, no_side]

@@ -37,6 +37,8 @@ async def _create_tables(db_path: Path):
                 total_cost REAL,
                 gross_spread REAL,
                 net_spread REAL,
+                yes_token_id TEXT,
+                no_token_id TEXT,
                 yes_liquidity REAL,
                 no_liquidity REAL,
                 status TEXT DEFAULT 'detected',
@@ -108,14 +110,16 @@ async def save_opportunity(opp: Opportunity) -> int:
         cursor = await db.execute("""
             INSERT INTO opportunities (timestamp, strategy, event_title,
                 poly_condition_id, jup_market_id, kalshi_market_id,
-                yes_venue, no_venue, yes_price, no_price, total_cost,
+                yes_venue, no_venue, yes_price, no_price,
+                yes_token_id, no_token_id, total_cost,
                 gross_spread, net_spread, yes_liquidity, no_liquidity,
                 status, skip_reason, execution_time_ms)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             opp.timestamp, opp.strategy, opp.event_title,
             opp.poly_condition_id, opp.jup_market_id, opp.kalshi_market_id,
             opp.yes_venue, opp.no_venue, opp.yes_price, opp.no_price,
+            opp.yes_token_id, opp.no_token_id,
             opp.total_cost, opp.gross_spread, opp.net_spread,
             opp.yes_liquidity, opp.no_liquidity, opp.status,
             opp.skip_reason, opp.execution_time_ms,

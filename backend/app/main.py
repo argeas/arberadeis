@@ -163,7 +163,8 @@ async def update_config(body: dict):
     if "paper_mode" in body:
         config.paper_mode = body["paper_mode"]
 
-    logger.info(f"[CONFIG] Updated: venues={config.active_venues} spread={config.min_net_spread} mode={'paper' if config.paper_mode else 'live'}")
+    config.save_runtime()
+    logger.info(f"[CONFIG] Updated and saved: venues={config.active_venues} spread={config.min_net_spread} mode={'paper' if config.paper_mode else 'live'}")
     return await get_config()
 
 
@@ -205,6 +206,7 @@ async def wallet():
 async def set_paper_mode():
     """Switch to paper trading mode."""
     config.paper_mode = True
+    config.save_runtime()
     logger.info("[MODE] Switched to PAPER mode")
     return {"mode": "paper", "db": "arb_paper.db"}
 
@@ -213,6 +215,7 @@ async def set_paper_mode():
 async def set_live_mode():
     """Switch to live trading mode. Requires confirmation."""
     config.paper_mode = False
+    config.save_runtime()
     logger.warning("[MODE] >>> SWITCHED TO LIVE MODE — REAL FUNDS AT RISK <<<")
     try:
         await telegram.send(
@@ -234,11 +237,12 @@ async def toggle_venue(venue: str):
     """Toggle a venue on/off."""
     if venue == "polymarket":
         config.venue_polymarket_enabled = not config.venue_polymarket_enabled
-        return {"venue": venue, "enabled": config.venue_polymarket_enabled}
     elif venue == "jupiter":
         config.venue_jupiter_enabled = not config.venue_jupiter_enabled
-        return {"venue": venue, "enabled": config.venue_jupiter_enabled}
     elif venue == "kalshi":
         config.venue_kalshi_enabled = not config.venue_kalshi_enabled
-        return {"venue": venue, "enabled": config.venue_kalshi_enabled}
-    return {"error": "Unknown venue"}
+    else:
+        return {"error": "Unknown venue"}
+    config.save_runtime()
+    enabled = getattr(config, f"venue_{venue}_enabled", False)
+    return {"venue": venue, "enabled": enabled}
