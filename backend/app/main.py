@@ -175,20 +175,19 @@ async def wallet():
 
     if config.venue_polymarket_enabled:
         try:
-            from app.polymarket_api import _get_clob_client
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-            import asyncio
-            client = _get_clob_client()
-            if client:
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: client.get_balance_allowance(
-                        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
-                    ),
-                )
-                if result and "balance" in result:
-                    balances["polymarket"] = round(int(result["balance"]) / 1e6, 2)
+            import httpx as _httpx
+            # Check on-chain USDC balance on proxy address (Polygon)
+            usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            addr = config.poly_proxy_address or config.poly_wallet_address
+            padded = addr[2:].lower().zfill(64)
+            data = f"0x70a08231{padded}"
+            async with _httpx.AsyncClient(timeout=10) as hc:
+                resp = await hc.post("https://polygon-bor-rpc.publicnode.com", json={
+                    "jsonrpc": "2.0", "method": "eth_call",
+                    "params": [{"to": usdc_contract, "data": data}, "latest"], "id": 1
+                })
+                result = resp.json().get("result", "0x0")
+                balances["polymarket"] = round(int(result, 16) / 1e6, 2)
         except Exception as e:
             logger.warning(f"[WALLET] Polymarket balance error: {e}")
 
