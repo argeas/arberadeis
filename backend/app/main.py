@@ -197,7 +197,24 @@ async def wallet():
         except Exception:
             pass
 
-    balances["total"] = round(balances["polymarket"] + balances["jupiter"] + balances["kalshi"], 2)
+    # Also check open positions value
+    positions_value = 0.0
+    if config.venue_polymarket_enabled:
+        try:
+            import httpx as _httpx2
+            addr = config.poly_proxy_address or config.poly_wallet_address
+            async with _httpx2.AsyncClient(timeout=10) as hc:
+                resp = await hc.get("https://data-api.polymarket.com/positions",
+                                    params={"user": addr, "sizeThreshold": "0.01"})
+                if resp.status_code == 200:
+                    positions = resp.json()
+                    if isinstance(positions, list):
+                        positions_value = round(sum(float(p.get("currentValue", 0) or 0) for p in positions), 2)
+        except Exception:
+            pass
+
+    balances["positions"] = positions_value
+    balances["total"] = round(balances["polymarket"] + balances["jupiter"] + balances["kalshi"] + positions_value, 2)
     return balances
 
 

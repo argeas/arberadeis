@@ -101,7 +101,8 @@
             <div class="label">Wallet Balance</div>
             <div class="value neutral" id="wallet-balance" style="font-size:28px;">$---</div>
             <div style="margin-top:8px; font-size:11px; color:#666;">
-                <div style="display:flex; justify-content:space-between;"><span>Polymarket</span><span id="w-poly">$---</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Polymarket USDC</span><span id="w-poly">$---</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Open Positions</span><span id="w-positions">$---</span></div>
                 <div style="display:flex; justify-content:space-between;"><span>Jupiter</span><span id="w-jup">$---</span></div>
                 <div style="display:flex; justify-content:space-between;"><span>Kalshi</span><span id="w-kalshi">$---</span></div>
             </div>
@@ -509,6 +510,7 @@
                 const w = await wRes.json();
                 document.getElementById('wallet-balance').textContent = '$' + w.total.toFixed(2);
                 document.getElementById('w-poly').textContent = '$' + w.polymarket.toFixed(2);
+                document.getElementById('w-positions').textContent = '$' + (w.positions || 0).toFixed(2);
                 document.getElementById('w-jup').textContent = '$' + w.jupiter.toFixed(2);
                 document.getElementById('w-kalshi').textContent = '$' + w.kalshi.toFixed(2);
             } catch(e) {}
