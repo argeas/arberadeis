@@ -73,6 +73,16 @@ async def execute_arb(opp: Opportunity) -> bool:
     )
     leg1.id = await save_leg(leg1)
 
+    # Verify market is still active before placing order
+    if leg1.venue == "polymarket" and leg1.token_id:
+        book = await polymarket_api.get_orderbook(leg1.token_id)
+        if not book.get("asks") and not book.get("bids"):
+            leg1.status = "failed"
+            await update_leg_status(leg1.id, "failed")
+            await update_opportunity_status(opp.id, "failed")
+            logger.warning(f"[EXEC] Leg 1 skipped: empty orderbook (market likely closed)")
+            return False
+
     order1 = await _place_order(leg1)
     if not order1:
         leg1.status = "failed"

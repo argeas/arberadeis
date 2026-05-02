@@ -86,8 +86,42 @@ async def fetch_all_active_markets(limit: int = 100) -> list[dict]:
     return markets
 
 
+def is_market_tradeable(market: dict) -> bool:
+    """Check if a market is still open and tradeable."""
+    import time
+    from datetime import datetime
+
+    # Skip closed markets
+    if market.get("closed") or not market.get("active"):
+        return False
+
+    # Skip markets that resolve within 5 minutes
+    end_date = market.get("endDate") or market.get("end_date_iso") or ""
+    if end_date:
+        try:
+            end_ts = datetime.fromisoformat(end_date.replace("Z", "+00:00")).timestamp()
+            if end_ts - time.time() < 300:  # Less than 5 min to close
+                return False
+        except Exception:
+            pass
+
+    # Skip if outcome prices are 0/1 (already resolved)
+    outcome_prices = market.get("outcomePrices", "")
+    if isinstance(outcome_prices, str):
+        try:
+            prices = json.loads(outcome_prices)
+            if prices and (float(prices[0]) >= 0.99 or float(prices[0]) <= 0.01):
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
 def parse_market_sides(market: dict) -> tuple[MarketSide | None, MarketSide | None]:
     """Parse a Gamma API market into YES/NO MarketSide objects."""
+    if not is_market_tradeable(market):
+        return None, None
     try:
         token_ids = market.get("clobTokenIds", "[]")
         if isinstance(token_ids, str):
