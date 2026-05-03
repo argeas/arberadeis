@@ -1,4 +1,4 @@
-py-clob-client==0.34.6
+py-clob-client-v2
 py-builder-relayer-client==0.0.1
 fastapi>=0.115.0
 uvicorn>=0.34.0

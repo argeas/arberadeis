@@ -25,34 +25,26 @@ def _get_clob_client():
         return None
 
     try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds
-        from py_builder_signing_sdk.config import BuilderConfig, BuilderApiKeyCreds
+        from py_clob_client_v2.client import ClobClient
 
-        creds = ApiCreds(
-            api_key=config.poly_api_key,
-            api_secret=config.poly_api_secret,
-            api_passphrase=config.poly_api_passphrase,
-        )
-        builder_creds = BuilderApiKeyCreds(
-            key=config.builder_api_key,
-            secret=config.builder_api_secret,
-            passphrase=config.builder_api_passphrase,
-        )
-        builder_config = BuilderConfig(local_builder_creds=builder_creds)
         _clob_client = ClobClient(
             host=CLOB_API,
-            key=config.poly_private_key,
             chain_id=137,
-            creds=creds,
-            builder_config=builder_config,
-            signature_type=2,
+            key=config.poly_private_key,
+            signature_type=2,  # GNOSIS_SAFE for proxy wallets
             funder=config.poly_proxy_address,
         )
-        logger.info(f"[POLY] CLOB client initialized. Funder: {config.poly_proxy_address}")
+
+        # Derive API creds from private key
+        creds = _clob_client.derive_api_key()
+        _clob_client.set_api_creds(creds)
+
+        logger.info(f"[POLY] V2 CLOB client initialized. Funder: {config.poly_proxy_address}")
         return _clob_client
     except Exception as e:
         logger.error(f"[POLY] Client init failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
@@ -184,6 +176,24 @@ async def get_best_ask(token_id: str) -> tuple[float, float]:
     return price, price * size
 
 
+async def get_tick_size(token_id: str) -> str:
+    """Get the tick size for a market via direct HTTP. Returns as string."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            resp = await client.get(f"{CLOB_API}/tick-size", params={"token_id": token_id})
+            if resp.status_code == 200:
+                return str(resp.json().get("minimum_tick_size", "0.01"))
+        except Exception:
+            pass
+    return "0.01"
+
+
+def _round_to_tick(price: float, tick_size: str) -> float:
+    """Round price to the nearest valid tick."""
+    tick = float(tick_size)
+    return round(round(price / tick) * tick, 4)
+
+
 async def place_order(token_id: str, side: str, size: float, price: float) -> str | None:
     """Place a FOK order on Polymarket. Returns order_id or None."""
     if config.paper_mode:
@@ -195,19 +205,41 @@ async def place_order(token_id: str, side: str, size: float, price: float) -> st
         return None
 
     try:
-        from py_clob_client.order_builder.constants import BUY
-        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client_v2.clob_types import OrderArgsV2, OrderType, PartialCreateOrderOptions
 
-        order_args = OrderArgs(price=price, size=size, side=BUY, token_id=token_id)
+        # Tick size as string
+        tick_size = await get_tick_size(token_id)
+        rounded_price = _round_to_tick(price, tick_size)
+
+        rounded_size = round(size, 2)
+        if side.upper() == "BUY":
+            rounded_size = max(rounded_size, 5.0)
+        rounded_size = float(int(rounded_size))
+
+        options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=False)
+
+        def _do():
+            order = client.create_order(
+                OrderArgsV2(
+                    token_id=token_id,
+                    price=rounded_price,
+                    size=rounded_size,
+                    side=side.upper(),
+                ),
+                options=options,
+            )
+            return client.post_order(order, order_type=OrderType.FOK)
+
         loop = asyncio.get_event_loop()
-        signed = await loop.run_in_executor(None, client.create_order, order_args)
-        resp = await loop.run_in_executor(None, client.post_order, signed, OrderType.FOK)
+        resp = await loop.run_in_executor(None, _do)
 
         if isinstance(resp, dict):
             order_id = resp.get("orderID") or resp.get("id")
             if order_id:
-                logger.info(f"[POLY] ORDER: {side} {size:.2f} @ ${price:.3f} -> {order_id}")
+                logger.info(f"[POLY] ORDER: {side} {rounded_size:.2f} @ ${rounded_price:.4f} (tick={tick_size}) -> {order_id}")
                 return order_id
+            else:
+                logger.error(f"[POLY] Order rejected: {resp}")
 
         return None
     except Exception as e:
