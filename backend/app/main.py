@@ -225,6 +225,8 @@ async def wallet():
 
     balances["positions"] = positions_value
     balances["total"] = round(balances["polymarket"] + balances["jupiter"] + balances["kalshi"] + positions_value, 2)
+    balances["deposit_wallet"] = config.poly_deposit_wallet
+    balances["proxy_wallet"] = config.poly_proxy_address
     return balances
 
 
