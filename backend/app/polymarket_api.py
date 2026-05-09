@@ -184,6 +184,18 @@ async def get_best_ask(token_id: str) -> tuple[float, float]:
     return price, price * size
 
 
+async def is_neg_risk(token_id: str) -> bool:
+    """Check if a market is a neg-risk market via CLOB API."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            resp = await client.get(f"{CLOB_API}/neg-risk", params={"token_id": token_id})
+            if resp.status_code == 200:
+                return bool(resp.json().get("neg_risk", False))
+        except Exception:
+            pass
+    return False
+
+
 async def get_tick_size(token_id: str) -> str:
     """Get the tick size for a market via direct HTTP. Returns as string."""
     async with httpx.AsyncClient(timeout=5) as client:
@@ -215,7 +227,6 @@ async def place_order(token_id: str, side: str, size: float, price: float) -> st
     try:
         from py_clob_client_v2.clob_types import OrderArgsV2, OrderType, PartialCreateOrderOptions
 
-        # Tick size as string
         tick_size = await get_tick_size(token_id)
         rounded_price = _round_to_tick(price, tick_size)
 
@@ -224,7 +235,9 @@ async def place_order(token_id: str, side: str, size: float, price: float) -> st
             rounded_size = max(rounded_size, 5.0)
         rounded_size = float(int(rounded_size))
 
-        options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=False)
+        # Detect neg-risk market
+        neg_risk = await is_neg_risk(token_id)
+        options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
 
         def _do():
             order = client.create_order(
@@ -236,6 +249,29 @@ async def place_order(token_id: str, side: str, size: float, price: float) -> st
                 ),
                 options=options,
             )
+            # If sig_type=3 (POLY_1271), replace SDK signature with correct ERC-7739 wrapped one
+            if int(order.signatureType) == 3:
+                from app.poly1271_signer import sign_poly1271_order
+                order_dict = {
+                    "salt": order.salt,
+                    "maker": order.maker,
+                    "signer": order.signer,
+                    "tokenId": order.tokenId,
+                    "makerAmount": order.makerAmount,
+                    "takerAmount": order.takerAmount,
+                    "side": order.side.value if hasattr(order.side, 'value') else order.side,
+                    "signatureType": int(order.signatureType),
+                    "timestamp": order.timestamp,
+                    "metadata": order.metadata,
+                    "builder": order.builder,
+                }
+                fixed_sig = sign_poly1271_order(
+                    config.poly_private_key,
+                    order_dict,
+                    chain_id=137,
+                    neg_risk=neg_risk,
+                )
+                order.signature = fixed_sig
             return client.post_order(order, order_type=OrderType.FOK)
 
         loop = asyncio.get_event_loop()
