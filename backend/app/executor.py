@@ -49,32 +49,77 @@ async def execute_arb(opp: Opportunity) -> bool:
     start_time = time.time()
     legs = _order_legs(opp)
 
-    # PRE-FLIGHT: check both orderbooks for sufficient liquidity at target prices
-    # before placing ANY order. Skip if either side can't be fully filled.
     leg1_size = size_usd / legs[0]["price"]
     leg2_size = size_usd / legs[1]["price"]
 
-    available_at_or_below = lambda asks, max_price: sum(
-        float(a["size"]) for a in asks if float(a["price"]) <= max_price
-    )
+    def vwap_for_size(asks_raw: list, target_size: float) -> tuple[float, float]:
+        """Walk asks ascending; return (vwap, fillable_size).
+        If full target can't fill, returns vwap of available + actual size."""
+        asks_sorted = sorted(asks_raw, key=lambda a: float(a["price"]))
+        accumulated = 0.0
+        cost = 0.0
+        worst_price = 0.0
+        for ask in asks_sorted:
+            ask_size = float(ask["size"])
+            ask_price = float(ask["price"])
+            need = target_size - accumulated
+            take = min(need, ask_size)
+            accumulated += take
+            cost += take * ask_price
+            worst_price = ask_price
+            if accumulated >= target_size:
+                break
+        vwap = cost / accumulated if accumulated > 0 else 0
+        return vwap, accumulated, worst_price
 
+    # PRE-FLIGHT: check both orderbooks. Compute VWAP for target sizes;
+    # skip only if combined VWAP cost > $1 (no longer profitable).
+    leg1_vwap = leg2_vwap = 0
+    leg1_avail = leg2_avail = 0
     for label, leg_def, target_size in [("leg 1", legs[0], leg1_size), ("leg 2", legs[1], leg2_size)]:
-        if leg_def["venue"] == "polymarket" and leg_def["token_id"]:
-            book = await polymarket_api.get_orderbook(leg_def["token_id"])
-            asks = book.get("asks", [])
-            if not asks:
-                logger.warning(f"[EXEC] Skip {label}: empty orderbook (market likely closed)")
-                await update_opportunity_status(opp.id, "skipped")
-                return False
-            # Polymarket /book asks are sorted descending; tolerate either order
-            avail = available_at_or_below(asks, leg_def["price"])
-            if avail < target_size:
-                logger.info(
-                    f"[EXEC] Skip arb: {label} insufficient depth "
-                    f"({avail:.2f} avail, need {target_size:.2f} at <=${leg_def['price']:.3f})"
-                )
-                await update_opportunity_status(opp.id, "skipped")
-                return False
+        if leg_def["venue"] != "polymarket" or not leg_def["token_id"]:
+            continue
+        book = await polymarket_api.get_orderbook(leg_def["token_id"])
+        asks = book.get("asks", [])
+        if not asks:
+            logger.info(f"[EXEC] Skip arb: {label} empty orderbook")
+            await update_opportunity_status(opp.id, "skipped")
+            return False
+        vwap, avail, worst = vwap_for_size(asks, target_size)
+        if avail < target_size * 0.5:  # Need at least 50% fillable
+            logger.info(
+                f"[EXEC] Skip arb: {label} thin book "
+                f"({avail:.2f}/{target_size:.2f} shares avail)"
+            )
+            await update_opportunity_status(opp.id, "skipped")
+            return False
+        if label == "leg 1":
+            leg1_vwap, leg1_avail = vwap, avail
+        else:
+            leg2_vwap, leg2_avail = vwap, avail
+
+    # Verify arb math still works at VWAP prices
+    fill_size = min(leg1_avail, leg2_avail)
+    total_cost_per_share = leg1_vwap + leg2_vwap
+    if total_cost_per_share >= 0.99:  # Less than 1¢ profit per share = skip
+        logger.info(
+            f"[EXEC] Skip arb: VWAP makes it unprofitable "
+            f"(${leg1_vwap:.3f} + ${leg2_vwap:.3f} = ${total_cost_per_share:.3f}/share)"
+        )
+        await update_opportunity_status(opp.id, "skipped")
+        return False
+
+    # Resize legs to actual fillable amount, keep same shares both sides
+    leg1_size = fill_size
+    leg2_size = fill_size
+    # Update prices to VWAP (the actual price we'd pay)
+    legs[0]["price"] = round(leg1_vwap + 0.001, 4)  # Pay up to VWAP + 1 tick
+    legs[1]["price"] = round(leg2_vwap + 0.001, 4)
+    logger.info(
+        f"[EXEC] Pre-flight OK: {fill_size:.2f} shares each. "
+        f"Cost: ${total_cost_per_share*fill_size:.2f}, payout: ${fill_size:.2f}, "
+        f"profit: ${(1-total_cost_per_share)*fill_size:.4f}"
+    )
 
     # Both books have enough depth — proceed with execution
     leg1 = ArbLeg(
@@ -113,7 +158,7 @@ async def execute_arb(opp: Opportunity) -> bool:
         side=legs[1]["side"],
         token_id=legs[1]["token_id"],
         price=legs[1]["price"],
-        size=size_usd / legs[1]["price"],
+        size=leg2_size,
         status="pending",
     )
     leg2.id = await save_leg(leg2)
