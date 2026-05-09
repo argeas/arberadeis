@@ -176,18 +176,27 @@ async def wallet():
     if config.venue_polymarket_enabled:
         try:
             import httpx as _httpx
-            # Check on-chain USDC balance on proxy address (Polygon)
-            usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            # V2: check pUSD balance (collateral token after migration)
+            # V1: check USDC.e balance (legacy)
+            pusd_contract = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
+            usdce_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
             addr = config.poly_proxy_address or config.poly_wallet_address
             padded = addr[2:].lower().zfill(64)
             data = f"0x70a08231{padded}"
-            async with _httpx.AsyncClient(timeout=10) as hc:
-                resp = await hc.post("https://polygon-bor-rpc.publicnode.com", json={
-                    "jsonrpc": "2.0", "method": "eth_call",
-                    "params": [{"to": usdc_contract, "data": data}, "latest"], "id": 1
-                })
-                result = resp.json().get("result", "0x0")
-                balances["polymarket"] = round(int(result, 16) / 1e6, 2)
+
+            async def _bal_of(contract: str) -> float:
+                async with _httpx.AsyncClient(timeout=10) as hc:
+                    resp = await hc.post("https://polygon-bor-rpc.publicnode.com", json={
+                        "jsonrpc": "2.0", "method": "eth_call",
+                        "params": [{"to": contract, "data": data}, "latest"], "id": 1
+                    })
+                    return int(resp.json().get("result", "0x0"), 16) / 1e6
+
+            pusd_bal = await _bal_of(pusd_contract)
+            usdce_bal = await _bal_of(usdce_contract)
+            balances["polymarket"] = round(pusd_bal + usdce_bal, 2)
+            balances["polymarket_pusd"] = round(pusd_bal, 2)
+            balances["polymarket_usdce"] = round(usdce_bal, 2)
         except Exception as e:
             logger.warning(f"[WALLET] Polymarket balance error: {e}")
 
