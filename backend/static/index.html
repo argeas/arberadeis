@@ -165,6 +165,7 @@
         <table>
             <thead>
                 <tr>
+                    <th>Date</th>
                     <th>Time</th>
                     <th>Strategy</th>
                     <th>Event</th>
@@ -178,7 +179,7 @@
                 </tr>
             </thead>
             <tbody id="opps-body">
-                <tr><td colspan="10" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>
+                <tr><td colspan="11" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>
             </tbody>
         </table>
     </div>
@@ -232,15 +233,17 @@
                 const tbody = document.getElementById('opps-body');
 
                 if (opps.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#444; padding:40px;">Scanning for opportunities...</td></tr>';
                     return;
                 }
 
                 tbody.innerHTML = opps.map(o => {
+                    const date = o.timestamp ? o.timestamp.substring(0, 10) : '';
                     const ts = o.timestamp ? o.timestamp.substring(11, 19) : '';
                     const spread = o.net_spread ? (o.net_spread * 100).toFixed(2) + '%' : '---';
                     const spreadCls = o.net_spread > 0 ? 'spread-positive' : 'spread-negative';
                     return '<tr>' +
+                        '<td style="font-size:11px; color:#888;">' + date + '</td>' +
                         '<td>' + ts + '</td>' +
                         '<td><span class="strategy ' + o.strategy + '">' + o.strategy + '</span></td>' +
                         '<td>' + (o.event_title || '').substring(0, 40) + '</td>' +

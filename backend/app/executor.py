@@ -172,13 +172,16 @@ def _venue_chain(venue: str) -> str:
 
 
 async def _place_order(leg: ArbLeg) -> str | None:
-    """Place an order on the appropriate venue."""
+    """Place an order on the appropriate venue.
+    For arbitrage: buying both YES and NO sides means BUY action on each token."""
     if leg.venue == "polymarket":
-        return await polymarket_api.place_order(leg.token_id, leg.side, leg.size, leg.price)
+        # leg.side is YES/NO (which token to buy); CLOB needs BUY/SELL action
+        return await polymarket_api.place_order(leg.token_id, "BUY", leg.size, leg.price)
     elif leg.venue == "jupiter":
         return await jupiter_api.create_order(leg.token_id, leg.side, leg.size, leg.price)
     elif leg.venue == "kalshi":
-        return await kalshi_api.place_order(leg.token_id, leg.side, leg.size, leg.price)
+        # Kalshi takes yes/no as side; we always BUY for arb
+        return await kalshi_api.place_order(leg.token_id, leg.side.lower(), leg.size, leg.price)
     return None
 
 
