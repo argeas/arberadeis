@@ -41,24 +41,42 @@ async def execute_arb(opp: Opportunity) -> bool:
         logger.warning(f"[EXEC] Orphan budget exhausted (${_daily_orphan_loss:.2f})")
         return False
 
-    # Calculate position size
-    # Use max_position_size as base; if liquidity data available, cap to it
     size_usd = config.max_position_size
-    if opp.yes_liquidity > 0:
-        size_usd = min(size_usd, opp.yes_liquidity)
-    if opp.no_liquidity > 0:
-        size_usd = min(size_usd, opp.no_liquidity)
     if size_usd < 1:
         await update_opportunity_status(opp.id, "skipped")
         return False
 
     start_time = time.time()
-
-    # Determine leg order — prefer faster venue first
-    # Jupiter (Solana ~400ms) before Polymarket (Polygon ~2s) before Kalshi
     legs = _order_legs(opp)
 
-    # Execute leg 1
+    # PRE-FLIGHT: check both orderbooks for sufficient liquidity at target prices
+    # before placing ANY order. Skip if either side can't be fully filled.
+    leg1_size = size_usd / legs[0]["price"]
+    leg2_size = size_usd / legs[1]["price"]
+
+    available_at_or_below = lambda asks, max_price: sum(
+        float(a["size"]) for a in asks if float(a["price"]) <= max_price
+    )
+
+    for label, leg_def, target_size in [("leg 1", legs[0], leg1_size), ("leg 2", legs[1], leg2_size)]:
+        if leg_def["venue"] == "polymarket" and leg_def["token_id"]:
+            book = await polymarket_api.get_orderbook(leg_def["token_id"])
+            asks = book.get("asks", [])
+            if not asks:
+                logger.warning(f"[EXEC] Skip {label}: empty orderbook (market likely closed)")
+                await update_opportunity_status(opp.id, "skipped")
+                return False
+            # Polymarket /book asks are sorted descending; tolerate either order
+            avail = available_at_or_below(asks, leg_def["price"])
+            if avail < target_size:
+                logger.info(
+                    f"[EXEC] Skip arb: {label} insufficient depth "
+                    f"({avail:.2f} avail, need {target_size:.2f} at <=${leg_def['price']:.3f})"
+                )
+                await update_opportunity_status(opp.id, "skipped")
+                return False
+
+    # Both books have enough depth — proceed with execution
     leg1 = ArbLeg(
         opportunity_id=opp.id,
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -68,20 +86,10 @@ async def execute_arb(opp: Opportunity) -> bool:
         side=legs[0]["side"],
         token_id=legs[0]["token_id"],
         price=legs[0]["price"],
-        size=size_usd / legs[0]["price"],
+        size=leg1_size,
         status="pending",
     )
     leg1.id = await save_leg(leg1)
-
-    # Verify market is still active before placing order
-    if leg1.venue == "polymarket" and leg1.token_id:
-        book = await polymarket_api.get_orderbook(leg1.token_id)
-        if not book.get("asks") and not book.get("bids"):
-            leg1.status = "failed"
-            await update_leg_status(leg1.id, "failed")
-            await update_opportunity_status(opp.id, "failed")
-            logger.warning(f"[EXEC] Leg 1 skipped: empty orderbook (market likely closed)")
-            return False
 
     order1 = await _place_order(leg1)
     if not order1:

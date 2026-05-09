@@ -272,9 +272,9 @@ async def place_order(token_id: str, side: str, size: float, price: float) -> st
                     neg_risk=neg_risk,
                 )
                 order.signature = fixed_sig
-            # FAK = Fill-And-Kill: accept partial fills, cancel rest.
-            # FOK would reject if not 100% fillable — too restrictive for thin markets.
-            return client.post_order(order, order_type=OrderType.FAK)
+            # FOK = Fill-Or-Kill: full fill or nothing. Safe because the executor
+            # pre-checks orderbook depth before placing both legs.
+            return client.post_order(order, order_type=OrderType.FOK)
 
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, _do)
