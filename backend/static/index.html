@@ -306,15 +306,14 @@
         }
 
         async function toggleActiveMode() {
-            const res = await fetch(API + '/api/mode');
-            const current = (await res.json()).mode;
-            if (current === 'paper') {
+            // Determine intended target from button text (what user sees)
+            const btn = document.getElementById('enable-btn');
+            const target = btn.textContent.includes('LIVE') ? 'live' : 'paper';
+            if (target === 'live') {
                 if (!confirm('⚠️ Switch ACTIVE mode to LIVE? Real orders will be placed!')) return;
-                await fetch(API + '/api/mode/live', {method:'POST'});
-            } else {
-                await fetch(API + '/api/mode/paper', {method:'POST'});
             }
-            // Update badge immediately without waiting for poll
+            await fetch(API + '/api/mode/' + target, {method:'POST'});
+            // Confirm what server actually applied
             const newRes = await fetch(API + '/api/mode');
             const newMode = (await newRes.json()).mode;
             const badge = document.getElementById('active-mode-badge');
