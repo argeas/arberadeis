@@ -95,7 +95,7 @@ async def execute_arb(opp: Opportunity) -> bool:
     leg1.status = "filled"
     await update_leg_status(leg1.id, "filled", fill_price=leg1.price)
 
-    # Execute leg 2 immediately
+    # Execute leg 2 with same USD exposure as leg 1 (size_usd / price gives shares for same dollar amount)
     leg2 = ArbLeg(
         opportunity_id=opp.id,
         timestamp=datetime.now(timezone.utc).isoformat(),
