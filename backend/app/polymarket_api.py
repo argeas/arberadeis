@@ -27,19 +27,27 @@ def _get_clob_client():
     try:
         from py_clob_client_v2.client import ClobClient
 
+        # V2: use sig_type=3 (POLY_1271) with deposit wallet as funder
+        # Falls back to sig_type=2 (GNOSIS_SAFE proxy) if deposit wallet not configured
+        if config.poly_deposit_wallet:
+            sig_type = 3
+            funder = config.poly_deposit_wallet
+            logger.info(f"[POLY] V2 mode: POLY_1271 (sig_type=3) with deposit wallet {funder}")
+        else:
+            sig_type = 2
+            funder = config.poly_proxy_address
+            logger.info(f"[POLY] Legacy mode: GNOSIS_SAFE (sig_type=2) with proxy {funder}")
+
         _clob_client = ClobClient(
             host=CLOB_API,
             chain_id=137,
             key=config.poly_private_key,
-            signature_type=2,  # GNOSIS_SAFE for proxy wallets
-            funder=config.poly_proxy_address,
+            signature_type=sig_type,
+            funder=funder,
         )
 
-        # Derive API creds from private key
         creds = _clob_client.derive_api_key()
         _clob_client.set_api_creds(creds)
-
-        logger.info(f"[POLY] V2 CLOB client initialized. Funder: {config.poly_proxy_address}")
         return _clob_client
     except Exception as e:
         logger.error(f"[POLY] Client init failed: {e}")

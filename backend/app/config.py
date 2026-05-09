@@ -28,6 +28,7 @@ class Config(BaseSettings):
     poly_private_key: str = ""
     poly_wallet_address: str = ""
     poly_proxy_address: str = ""
+    poly_deposit_wallet: str = ""  # V2 deposit wallet (sig_type=3, POLY_1271)
     builder_api_key: str = ""
     builder_api_secret: str = ""
     builder_api_passphrase: str = ""

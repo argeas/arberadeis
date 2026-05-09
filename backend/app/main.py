@@ -180,7 +180,8 @@ async def wallet():
             # V1: check USDC.e balance (legacy)
             pusd_contract = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
             usdce_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-            addr = config.poly_proxy_address or config.poly_wallet_address
+            # V2: prefer deposit wallet, fall back to proxy/EOA
+            addr = config.poly_deposit_wallet or config.poly_proxy_address or config.poly_wallet_address
             padded = addr[2:].lower().zfill(64)
             data = f"0x70a08231{padded}"
 
