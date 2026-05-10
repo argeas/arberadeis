@@ -22,16 +22,43 @@ FULL_SCAN_INTERVAL = 60  # Re-discover markets every 60 seconds
 # Deduplication: track recently detected opportunities by market key
 _recent_opps: dict[str, float] = {}  # key → timestamp of last detection
 DEDUP_COOLDOWN = 300  # Don't re-detect same market within 5 minutes
-MIN_VOLUME = 5000  # Minimum market volume USD to consider ($5K+)
+MIN_VOLUME = 1000  # Min market volume USD; lower catches mid-tier markets with wider spreads
+MAX_SCAN_MARKETS = 1000  # Top N markets by volume to scan
 
 
 async def discover_polymarket_markets():
-    """Fetch all active Polymarket markets and build MarketPair entries."""
-    logger.info("[SCANNER] Discovering Polymarket markets...")
-    markets = await polymarket_api.fetch_all_active_markets(limit=100)
-    count = 0
+    """Fetch high-volume active Polymarket markets and build MarketPair entries.
+    Filters to top markets by volume since arbs only exist where there's real liquidity."""
+    logger.info("[SCANNER] Discovering Polymarket markets (high-volume filter)...")
+    import httpx, json
+    markets = []
+    # Fetch top 500 markets by volume — these are where real liquidity is
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            resp = await client.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={
+                    "active": "true", "closed": "false",
+                    "order": "volume", "ascending": "false",
+                    "limit": MAX_SCAN_MARKETS,
+                },
+            )
+            if resp.status_code == 200:
+                markets = resp.json()
+        except Exception as e:
+            logger.warning(f"[SCANNER] Fetch error: {e}")
+            return 0
 
+    count = 0
     for m in markets:
+        # Volume filter — skip markets without real activity
+        try:
+            volume = float(m.get("volume", 0) or 0)
+        except Exception:
+            volume = 0
+        if volume < MIN_VOLUME:
+            continue
+
         condition_id = m.get("conditionId", "")
         if not condition_id:
             continue
@@ -53,7 +80,7 @@ async def discover_polymarket_markets():
         pair.sides[("polymarket", "NO")] = no_side
         count += 1
 
-    logger.info(f"[SCANNER] Polymarket: {count} markets loaded")
+    logger.info(f"[SCANNER] Polymarket: {count} high-volume markets loaded")
     return count
 
 
@@ -239,9 +266,64 @@ def _build_opportunity(pair, strategy, yes_venue, no_venue, yes_side, no_side,
     )
 
 
+async def _real_intra_spread(pair: MarketPair, venue: str, target_size: float = 5.0) -> tuple[float, float, float] | None:
+    """Read REAL orderbooks for both sides and compute REAL VWAP-based spread.
+    Returns (yes_vwap, no_vwap, total) or None if insufficient depth.
+    Only Polymarket is supported here (live orderbook reads)."""
+    if venue != "polymarket":
+        # Fall back to cached prices for other venues
+        total = pair.get_intra_spread(venue)
+        if total is not None:
+            yes = pair.sides.get((venue, "YES"))
+            no = pair.sides.get((venue, "NO"))
+            return (yes.best_ask if yes else 0, no.best_ask if no else 0, total)
+        return None
+
+    yes_side = pair.sides.get((venue, "YES"))
+    no_side = pair.sides.get((venue, "NO"))
+    if not yes_side or not no_side or not yes_side.token_id or not no_side.token_id:
+        return None
+
+    # Fetch both orderbooks in parallel
+    import asyncio as _a
+    yes_book, no_book = await _a.gather(
+        polymarket_api.get_orderbook(yes_side.token_id),
+        polymarket_api.get_orderbook(no_side.token_id),
+        return_exceptions=True,
+    )
+
+    def vwap(book, target):
+        if isinstance(book, Exception) or not isinstance(book, dict):
+            return None
+        asks = book.get("asks", [])
+        if not asks:
+            return None
+        asks_sorted = sorted(asks, key=lambda a: float(a["price"]))
+        accumulated = 0.0
+        cost = 0.0
+        for ask in asks_sorted:
+            ask_size = float(ask["size"])
+            ask_price = float(ask["price"])
+            need = target - accumulated
+            take = min(need, ask_size)
+            accumulated += take
+            cost += take * ask_price
+            if accumulated >= target:
+                break
+        if accumulated < target * 0.5:
+            return None
+        return cost / accumulated
+
+    yes_vwap = vwap(yes_book, target_size)
+    no_vwap = vwap(no_book, target_size)
+    if yes_vwap is None or no_vwap is None:
+        return None
+    return (yes_vwap, no_vwap, yes_vwap + no_vwap)
+
+
 async def scan_for_opportunities() -> list[Opportunity]:
-    """Scan all market pairs for arbitrage opportunities.
-    Includes deduplication and liquidity filtering."""
+    """Scan high-volume markets via REAL orderbook data.
+    Filters to top markets by volume; reads actual asks (not stale outcomePrices)."""
     global _last_full_scan
 
     now = time.time()
@@ -253,23 +335,63 @@ async def scan_for_opportunities() -> list[Opportunity]:
 
     opportunities = []
 
+    # Compute target size in shares for the depth check
+    target_shares = config.max_position_size / 0.5  # Worst case: $5 / $0.50 = 10 shares
+
+    # Use cached prices as a CHEAP filter — but accept any spread < $1
+    # since cached prices may be off. Real check happens via orderbook below.
+    candidates = []
     for key, pair in _market_pairs.items():
-        # Strategy 1: Intra-platform arbitrage
         for venue in config.active_venues:
-            total = pair.get_intra_spread(venue)
-            if total is not None and total < 1.0:
-                fee = _get_venue_fee(venue) * 2
-                gross_spread = 1.0 - total
-                net_spread = gross_spread - fee
-                if net_spread >= config.min_net_spread:
-                    dk = _dedup_key(key, "intra", venue, venue)
-                    if _is_duplicate(dk):
-                        continue
-                    yes_side = pair.sides.get((venue, "YES"))
-                    no_side = pair.sides.get((venue, "NO"))
-                    opp = _build_opportunity(pair, "intra", venue, venue,
-                                             yes_side, no_side, total, gross_spread, net_spread)
-                    opportunities.append(opp)
+            cached_total = pair.get_intra_spread(venue)
+            # Loose filter: any market where cached prices suggest possible spread
+            # OR where we can't tell (price=0 means we should still check book)
+            if cached_total is None:
+                continue
+            if cached_total < 1.05:  # Loose: even slightly above $1 cached may have real spread under it
+                candidates.append((key, pair, venue))
+
+    # Cap to avoid rate limits — sort by most promising (lowest cached total = best lead)
+    candidates.sort(key=lambda c: c[1].get_intra_spread(c[2]) or 999)
+    candidates = candidates[:80]
+    if candidates:
+        logger.info(f"[SCANNER] {len(candidates)} candidates to check; lowest cached total: ${candidates[0][1].get_intra_spread(candidates[0][2]):.3f}")
+
+    for key, pair, venue in candidates:
+        dk = _dedup_key(key, "intra", venue, venue)
+        if _is_duplicate(dk):
+            continue
+
+        # REAL orderbook check — this is the actual arbitrage detection
+        result = await _real_intra_spread(pair, venue, target_size=target_shares)
+        if result is None:
+            continue
+        yes_vwap, no_vwap, total = result
+
+        if total >= 1.0:
+            continue  # No arb after VWAP
+
+        fee = _get_venue_fee(venue) * 2
+        gross_spread = 1.0 - total
+        net_spread = gross_spread - fee
+        if net_spread < config.min_net_spread:
+            continue
+
+        yes_side = pair.sides.get((venue, "YES"))
+        no_side = pair.sides.get((venue, "NO"))
+        # Update with REAL VWAP prices
+        if yes_side:
+            yes_side.best_ask = yes_vwap
+        if no_side:
+            no_side.best_ask = no_vwap
+
+        opp = _build_opportunity(pair, "intra", venue, venue,
+                                 yes_side, no_side, total, gross_spread, net_spread)
+        opportunities.append(opp)
+        logger.info(
+            f"[ARB-REAL] {pair.event_title[:40]} | "
+            f"YES@${yes_vwap:.3f} + NO@${no_vwap:.3f} = ${total:.3f} (net {net_spread*100:.2f}%)"
+        )
 
         # Strategy 2+: Cross-venue arbitrage
         if len(config.active_venues) >= 2:
